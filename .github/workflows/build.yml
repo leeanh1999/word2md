@@ -1,0 +1,56 @@
+name: build
+
+# Produces both executables, because PyInstaller cannot cross-compile: the
+# ARM64 build has to run on an ARM64 machine with ARM64 Python.
+#
+# The windows-11-arm runner is free for public repositories only. In a private
+# repository the arm64 job will fail to start, so build that one on a real
+# Windows on ARM device with: python build.py --clean --arch arm64
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  executable:
+    name: word2md-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.arch }}
+
+      - name: Show the interpreter
+        run: python -c "import platform, sys; print(platform.machine(), sys.version)"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Test
+        run: python -m unittest discover -s tests -t tests -p "test_*.py"
+
+      # --arch refuses to run on a mismatched interpreter, and the result is
+      # checked against its own PE header afterwards.
+      - name: Build
+        run: python build.py --clean --arch ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: word2md-${{ matrix.arch }}
+          path: dist/word2md-${{ matrix.arch }}.exe
+          if-no-files-found: error
