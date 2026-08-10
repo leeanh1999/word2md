@@ -5,11 +5,15 @@ from __future__ import annotations
 import datetime as _dt
 import io
 import mimetypes
+import re
+import shutil
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
+from urllib.parse import quote, unquote
 
 import mammoth
 import pandas as pd
@@ -346,23 +350,47 @@ def convert_docx_sections(
     output_dir = Path(output_dir)
     started = time.perf_counter()
 
-    def failed(message: str) -> list[ConversionResult]:
-        return [
-            ConversionResult(
-                source=source,
-                status=STATUS_ERROR,
-                message=message,
-                duration=time.perf_counter() - started,
-            )
-        ]
-
     if not node_ids:
-        return failed("Chưa chọn mục nào để trích xuất.")
+        return _section_failed(source, "Chưa chọn mục nào để trích xuất.", started)
 
+    # Reading the outline means converting the whole document, images and
+    # attachments included. They go to a scratch folder first so that only the
+    # ones the chosen sections actually point at reach the output folder.
+    staging = Path(tempfile.mkdtemp(prefix="word2md-sections-"))
+    try:
+        return _export_sections(
+            source, output_dir, node_ids, options, upgrader, staging, started
+        )
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _section_failed(
+    source: Path, message: str, started: float
+) -> list[ConversionResult]:
+    return [
+        ConversionResult(
+            source=source,
+            status=STATUS_ERROR,
+            message=message,
+            duration=time.perf_counter() - started,
+        )
+    ]
+
+
+def _export_sections(
+    source: Path,
+    output_dir: Path,
+    node_ids: Sequence[str],
+    options: ConversionOptions,
+    upgrader: LegacyUpgrader | None,
+    staging: Path,
+    started: float,
+) -> list[ConversionResult]:
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        image_dir = output_dir / f"{source.stem}_images"
-        attachment_dir = output_dir / f"{source.stem}_attachments"
+        image_dir = staging / f"{source.stem}_images"
+        attachment_dir = staging / f"{source.stem}_attachments"
         convert_options = replace(options, add_title_heading=False)
         readable, title, warnings = ensure_docx(source, upgrader)
         markdown, more = docx_to_markdown(
@@ -372,41 +400,98 @@ def convert_docx_sections(
         roots = build_outline(markdown)
         selected = top_level_selection(roots, node_ids)
         if not selected:
-            return failed("Các mục đã chọn không còn tồn tại trong tài liệu.")
+            return _section_failed(
+                source, "Các mục đã chọn không còn tồn tại trong tài liệu.", started
+            )
     except LegacyConversionError as exc:
-        return failed(str(exc))
+        return _section_failed(source, str(exc), started)
     except PermissionError:
-        return failed("Không có quyền truy cập (file đang mở?).")
+        return _section_failed(
+            source, "Không có quyền truy cập (file đang mở?).", started
+        )
     except Exception as exc:  # noqa: BLE001
-        return failed(f"{type(exc).__name__}: {exc}")
+        return _section_failed(source, f"{type(exc).__name__}: {exc}", started)
+
+    staged = {
+        image_dir.name: (image_dir, "_images"),
+        attachment_dir.name: (attachment_dir, "_attachments"),
+    }
 
     if not options.split_sections:
         body = extract_sections(
             markdown, node_ids, roots=roots, promote=options.promote_headings
         )
+        # Several sections merged into one file have no heading to be named
+        # after, so the document keeps its own name.
+        alone = selected[0] if len(selected) == 1 else None
+        stem = source.stem if alone is None else slugify_title(alone.title, source.stem)
         return [
             _write_section(
-                source, output_dir, source.stem, body, options, warnings, started
+                source,
+                output_dir,
+                stem,
+                body,
+                options,
+                warnings,
+                started,
+                alone,
+                staged,
             )
         ]
 
-    shift = 0
-    if options.promote_headings:
-        levels = [node.level for node in selected if node.level > 0]
-        shift = min(levels) - 1 if levels else 0
-
     results: list[ConversionResult] = []
-    for position, node in enumerate(selected, start=1):
-        body = section_text(
-            markdown, node, promote=options.promote_headings, shift=shift
-        )
-        name = f"{source.stem} - {position:02d} {slugify_title(node.title)}"
+    for node in selected:
+        # Each file stands on its own, so its heading is promoted all the way
+        # to H1 rather than by the amount the whole selection shares.
+        body = section_text(markdown, node, promote=options.promote_headings)
         results.append(
             _write_section(
-                source, output_dir, name, body, options, warnings, started, node
+                source,
+                output_dir,
+                slugify_title(node.title, source.stem),
+                body,
+                options,
+                warnings,
+                started,
+                node,
+                staged,
             )
         )
     return results
+
+
+# Markdown link target: the path inside ![alt](…) or [label](…).
+_ASSET_LINK = re.compile(r"\]\(([^()\s]+)\)")
+
+
+def _relocate_assets(
+    body: str, destination: Path, staged: dict[str, tuple[Path, str]]
+) -> str:
+    """Copy the assets `body` points at into folders named after `destination`.
+
+    Only the referenced files are copied, so exporting one section does not
+    drag the whole document's images and attachments along with it.
+    """
+    folders: dict[str, str] = {}
+
+    def replace(match: re.Match) -> str:
+        folder, separator, name = match.group(1).partition("/")
+        staged_dir, suffix = staged.get(folder, (None, ""))
+        if staged_dir is None or not separator:
+            return match.group(0)
+        origin = staged_dir / unquote(name)
+        if not origin.is_file():
+            return match.group(0)
+
+        target = folders.get(folder)
+        if target is None:
+            target = f"{destination.stem}{suffix}"
+            folders[folder] = target
+            (destination.parent / target).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(origin, destination.parent / target / origin.name)
+        return f"]({quote(f'{target}/{origin.name}', safe='/')})"
+
+    return _ASSET_LINK.sub(replace, body)
 
 
 def _write_section(
@@ -418,6 +503,7 @@ def _write_section(
     warnings: Sequence[str],
     started: float,
     node: OutlineNode | None = None,
+    staged: dict[str, tuple[Path, str]] | None = None,
 ) -> ConversionResult:
     label = source.name if node is None else f"{source.name} › {node.title}"
     if not body.strip():
@@ -428,13 +514,17 @@ def _write_section(
             duration=time.perf_counter() - started,
         )
 
-    if options.add_title_heading and not body.lstrip().startswith("# "):
+    # Any leading heading already names the section; a second one would only
+    # repeat it.
+    if options.add_title_heading and not body.lstrip().startswith("#"):
         body = f"# {node.title if node is not None else source.stem}\n\n{body}"
 
     try:
         destination = target_path(
             Path(f"{stem}.md"), output_dir, overwrite=options.overwrite
         )
+        if staged:
+            body = _relocate_assets(body, destination, staged)
         destination.write_text(body.rstrip() + "\n", encoding="utf-8", newline="\n")
     except Exception as exc:  # noqa: BLE001
         return ConversionResult(

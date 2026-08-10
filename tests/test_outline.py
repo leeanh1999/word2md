@@ -235,14 +235,42 @@ class DocxSectionTests(unittest.TestCase):
     def test_split_export_creates_one_file_per_section(self):
         folder = self._out("split")
         report = self.outline.roots[0]
-        ids = [child.node_id for child in report.children[:3]]
+        sections = report.children[:3]
         options = ConversionOptions(split_sections=True)
-        results = convert_docx_sections(self.docx, folder, ids, options)
+        results = convert_docx_sections(
+            self.docx, folder, [node.node_id for node in sections], options
+        )
         self.assertEqual(len(results), 3)
         self.assertTrue(all(r.status == STATUS_SUCCESS for r in results))
-        names = sorted(p.name for p in folder.glob("*.md"))
-        self.assertEqual(len(names), 3)
-        self.assertTrue(names[0].startswith("test - 01 "))
+        self.assertEqual(
+            sorted(path.name for path in folder.glob("*.md")),
+            sorted(f"{slugify_title(node.title)}.md" for node in sections),
+        )
+
+    def test_split_export_promotes_every_file_to_h1(self):
+        folder = self._out("promoted")
+        deep = self.outline.nodes[
+            next(n for n in self.outline.roots if n.title == "Phụ lục")
+            .children[0]
+            .children[0]
+            .node_id
+        ]
+        options = ConversionOptions(split_sections=True)
+        results = convert_docx_sections(self.docx, folder, [deep.node_id], options)
+        text = results[0].output.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith(f"# {deep.title}\n"), text[:60])
+
+    def test_a_single_section_is_named_after_its_heading(self):
+        folder = self._out("named")
+        appendix = next(n for n in self.outline.roots if n.title == "Phụ lục")
+        results = convert_docx_sections(self.docx, folder, [appendix.node_id])
+        self.assertEqual(results[0].output.name, "Phụ lục.md")
+
+    def test_merging_several_sections_keeps_the_document_name(self):
+        folder = self._out("merged")
+        ids = [node.node_id for node in self.outline.roots]
+        results = convert_docx_sections(self.docx, folder, ids)
+        self.assertEqual(results[0].output.name, "test.md")
 
     def test_section_ids_stay_valid_between_preview_and_export(self):
         folder = self._out("stable")
@@ -269,6 +297,93 @@ class DocxSectionTests(unittest.TestCase):
             self.samples["corrupt"], self._out("corrupt"), ["1"]
         )
         self.assertEqual(results[0].status, STATUS_ERROR)
+
+
+class SectionAssetTests(unittest.TestCase):
+    """A section export must carry its own images and attachments - only those.
+
+    The sample keeps the picture and the attachments in different sections on
+    purpose, so leaking the whole document's assets is easy to spot.
+    """
+
+    PICTURE = "A.1 Viết tắt"
+    ATTACHED = "B. Liên hệ"
+    PLAIN = "1. Tổng quan"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.docx = build_all(Path(cls.tmp.name) / "samples", legacy=False)[
+            "attachments"
+        ]
+        cls.outline = load_outline(cls.docx)
+        cls.ids = {
+            node.title: node.node_id for node in iter_nodes(cls.outline.roots)
+        }
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _export(self, name: str, titles, **options) -> Path:
+        folder = Path(self.tmp.name) / name
+        results = convert_docx_sections(
+            self.docx,
+            folder,
+            [self.ids[title] for title in titles],
+            ConversionOptions(**options),
+        )
+        for result in results:
+            self.assertEqual(result.status, STATUS_SUCCESS, result.message)
+        return folder
+
+    def _folders(self, folder: Path) -> list[str]:
+        return sorted(path.name for path in folder.iterdir() if path.is_dir())
+
+    def test_a_section_without_assets_creates_no_folders(self):
+        folder = self._export("plain", [self.PLAIN])
+        self.assertEqual(self._folders(folder), [])
+
+    def test_only_the_chosen_sections_assets_are_written(self):
+        folder = self._export("picture", [self.PICTURE])
+        self.assertEqual(self._folders(folder), [f"{self.PICTURE}_images"])
+        self.assertEqual(
+            [path.name for path in (folder / f"{self.PICTURE}_images").iterdir()],
+            ["image1.png"],
+        )
+
+    def test_attachments_follow_their_own_section(self):
+        folder = self._export("attached", [self.ATTACHED])
+        self.assertEqual(self._folders(folder), [f"{self.ATTACHED}_attachments"])
+        self.assertEqual(
+            len(list((folder / f"{self.ATTACHED}_attachments").iterdir())), 2
+        )
+
+    def test_split_export_gives_each_section_its_own_folder(self):
+        folder = self._export(
+            "split", [self.PICTURE, self.ATTACHED, self.PLAIN], split_sections=True
+        )
+        self.assertEqual(
+            self._folders(folder),
+            sorted([f"{self.PICTURE}_images", f"{self.ATTACHED}_attachments"]),
+        )
+
+    def test_links_point_at_the_renamed_folder(self):
+        folder = self._export("links", [self.PICTURE])
+        text = (folder / f"{self.PICTURE}.md").read_text(encoding="utf-8")
+        self.assertIn("A.1%20Vi%E1%BA%BFt%20t%E1%BA%AFt_images/image1.png", text)
+
+    def test_a_whole_document_export_still_keeps_everything(self):
+        """The plain conversion is unchanged: every asset, named after the file."""
+        from src.converter import convert_file
+
+        folder = Path(self.tmp.name) / "whole"
+        result = convert_file(self.docx, folder)
+        self.assertEqual(result.status, STATUS_SUCCESS, result.message)
+        self.assertEqual(
+            self._folders(folder),
+            ["attachments_attachments", "attachments_images"],
+        )
 
 
 if __name__ == "__main__":

@@ -41,10 +41,25 @@ Two export options:
   one file.
 - **Promote selected headings to H1** — extracting a `Heading 3` section then produces
   a file starting with `#` instead of `###`; subsections are shifted by the same amount,
-  so the relative hierarchy is preserved.
+  so the relative hierarchy is preserved. With *split*, every file is promoted on its
+  own, so each one starts at `#`.
 
 Section IDs are hierarchical (`2`, `2.1`, `2.1.3`) and are shared between the GUI and
 the CLI.
+
+### What a section export writes
+
+An exported section is a self-contained folder-mate of the document it came from:
+
+- The `.md` file is **named after the heading** (`Phụ lục.md`), not after the document.
+  Merging several sections into one file is the exception — there is no single heading
+  to take the name from, so the document keeps its own.
+- Its images and attachments go to `<heading>_images/` and `<heading>_attachments/`,
+  and **only the ones that section actually uses** are written. Reading the outline
+  still converts the whole document, but the assets land in a scratch folder first and
+  are copied out per file, so exporting one appendix no longer drops every picture in
+  the document next to it.
+- A section that uses neither creates no folder at all.
 
 ### Word → Markdown
 
@@ -258,8 +273,8 @@ Pushing a `v*` tag runs the tests, builds both executables and publishes them as
 GitHub Release:
 
 ```powershell
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 The release job waits for both architectures, so a release never ships with one of
@@ -275,7 +290,7 @@ pandas==2.3.3; platform_machine != "ARM64"
 pandas>=3.0.5; platform_machine == "ARM64"
 ```
 
-All 94 tests pass on pandas 3.0.5 and the Markdown output is identical to pandas 2.3.3.
+All 103 tests pass on pandas 3.0.5 and the Markdown output is identical to pandas 2.3.3.
 
 Without an ARM64 build, the x64 one still runs on Windows on ARM through the Prism
 emulation layer, just slower.

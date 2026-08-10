@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import struct
 import zipfile
+import zlib
 from pathlib import Path
 
 import pandas as pd
@@ -201,8 +203,40 @@ def _compound_file(stream_name: str, payload: bytes) -> bytes:
     return header + fat + directory + payload.ljust(sectors * 512, b"\0")
 
 
+def _png(size: int = 8) -> bytes:
+    """A solid red PNG, so the samples need no binary fixture on disk."""
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", zlib.crc32(kind + payload))
+        )
+
+    scanlines = b"".join(b"\0" + b"\xff\x00\x00" * size for _ in range(size))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(scanlines))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _insert_picture(document, after_heading: str, image: bytes) -> None:
+    """Put a picture in its own paragraph, right under the given heading."""
+    paragraphs = document.paragraphs
+    index = next(i for i, p in enumerate(paragraphs) if p.text == after_heading)
+    anchor = paragraphs[index + 1]
+    anchor.insert_paragraph_before().add_run().add_picture(io.BytesIO(image))
+
+
 def make_attachments_docx(base: Path, path: Path) -> Path:
-    """Copy a .docx and graft OLE attachments onto the end of the body."""
+    """Copy a .docx and graft a picture and OLE attachments onto it.
+
+    The picture and the attachments land in different sections, so exporting
+    one section can be checked to leave the other one's assets behind.
+    """
     icon = b"\x01\x00\x00\x00" + bytes(84)  # enough of an .emf header to link
     paragraphs = []
     extra: dict[str, bytes] = {"word/media/icon1.emf": icon}
@@ -231,8 +265,13 @@ def make_attachments_docx(base: Path, path: Path) -> Path:
             f'<w:r><w:t xml:space="preserve"> là tệp đính kèm.</w:t></w:r></w:p>'
         )
 
+    illustrated = io.BytesIO()
+    document = Document(str(base))
+    _insert_picture(document, "A.1 Viết tắt", _png())
+    document.save(illustrated)
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(base) as source, zipfile.ZipFile(
+    with zipfile.ZipFile(illustrated) as source, zipfile.ZipFile(
         path, "w", zipfile.ZIP_DEFLATED
     ) as target:
         for item in source.infolist():
