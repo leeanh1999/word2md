@@ -54,3 +54,30 @@ jobs:
           name: word2md-${{ matrix.arch }}
           path: dist/word2md-${{ matrix.arch }}.exe
           if-no-files-found: error
+
+  # Only on a tag, and only once both executables exist: a release missing an
+  # architecture is worse than no release at all.
+  release:
+    name: Publish release
+    needs: executable
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: word2md-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/*.exe \
+            --title "word2md $GITHUB_REF_NAME" \
+            --generate-notes

@@ -252,6 +252,19 @@ python -m venv .venv
    `windows-11-arm` runner. That runner is **free for public repos only**; private
    repos need real hardware or a larger ARM64 runner.
 
+## Releases
+
+Pushing a `v*` tag runs the tests, builds both executables and publishes them as a
+GitHub Release:
+
+```powershell
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+The release job waits for both architectures, so a release never ships with one of
+them missing.
+
 Every dependency ships a `win_arm64` wheel for CPython 3.13, including `pywin32` (so
 `.doc`/`.xls` over COM still work) and `tkinterdnd2` (which bundles `tkdnd/win-arm64`,
 keeping drag-and-drop native). Only `pandas` publishes `win_arm64` wheels from 3.0
