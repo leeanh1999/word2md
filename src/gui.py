@@ -174,6 +174,7 @@ class App:
         self.rows: dict[Path, FileRow] = {}
         self.output_dir = ctk.StringVar(value=str(Path.cwd() / "output"))
         self.extract_images = ctk.BooleanVar(value=True)
+        self.extract_attachments = ctk.BooleanVar(value=True)
         self.overwrite = ctk.BooleanVar(value=False)
         self.add_title = ctk.BooleanVar(value=True)
 
@@ -295,6 +296,9 @@ class App:
         ctk.CTkCheckBox(checks, text="Trích xuất ảnh trong Word", variable=self.extract_images).pack(
             side="left", padx=(0, 18)
         )
+        ctk.CTkCheckBox(
+            checks, text="Tách file đính kèm", variable=self.extract_attachments
+        ).pack(side="left", padx=(0, 18))
         ctk.CTkCheckBox(checks, text="Ghi đè file trùng tên", variable=self.overwrite).pack(
             side="left", padx=(0, 18)
         )
@@ -503,6 +507,7 @@ class App:
 
         options = ConversionOptions(
             extract_images=self.extract_images.get(),
+            extract_attachments=self.extract_attachments.get(),
             overwrite=self.overwrite.get(),
             add_title_heading=self.add_title.get(),
             promote_headings=choice["promote"],
@@ -541,6 +546,7 @@ class App:
         self.last_output_dir = output_dir
         options = ConversionOptions(
             extract_images=self.extract_images.get(),
+            extract_attachments=self.extract_attachments.get(),
             overwrite=self.overwrite.get(),
             add_title_heading=self.add_title.get(),
         )

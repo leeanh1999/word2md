@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import io
 import mimetypes
 import threading
 import time
@@ -13,6 +14,7 @@ from typing import Callable, Iterable, Sequence
 import mammoth
 import pandas as pd
 
+from .attachments import PreparedDocument, prepare_attachments
 from .html_to_markdown import html_to_markdown
 from .legacy import (
     LEGACY_EXCEL,
@@ -61,6 +63,7 @@ r[style-name='Strong'] => strong
 @dataclass
 class ConversionOptions:
     extract_images: bool = True
+    extract_attachments: bool = True
     overwrite: bool = False
     first_row_as_header: bool = True
     add_title_heading: bool = True
@@ -166,6 +169,7 @@ def docx_to_markdown(
     options: ConversionOptions | None = None,
     image_dir: Path | None = None,
     title: str | None = None,
+    attachment_dir: Path | None = None,
 ) -> tuple[str, list[str]]:
     """Return (markdown, warnings) for a .docx file.
 
@@ -175,14 +179,30 @@ def docx_to_markdown(
     options = options or ConversionOptions()
     warnings: list[str] = []
 
-    kwargs = {"style_map": DOCX_STYLE_MAP}
-    if options.extract_images and image_dir is not None:
-        kwargs["convert_image"] = _image_converter(image_dir, warnings)
-    elif not options.extract_images:
-        kwargs["convert_image"] = mammoth.images.img_element(lambda _image: {"src": ""})
+    def convert(handle):
+        kwargs = {"style_map": DOCX_STYLE_MAP}
+        if options.extract_images and image_dir is not None:
+            kwargs["convert_image"] = _image_converter(image_dir, warnings)
+        elif not options.extract_images:
+            kwargs["convert_image"] = mammoth.images.img_element(
+                lambda _image: {"src": ""}
+            )
+        with handle:
+            return mammoth.convert_to_html(handle, **kwargs)
 
-    with source.open("rb") as handle:
-        result = mammoth.convert_to_html(handle, **kwargs)
+    prepared = PreparedDocument()
+    if options.extract_attachments:
+        prepared = prepare_attachments(source, attachment_dir)
+        warnings.extend(prepared.warnings)
+
+    if prepared.data is None:
+        result = convert(source.open("rb"))
+    else:
+        try:
+            result = convert(io.BytesIO(prepared.data))
+        except Exception as exc:  # noqa: BLE001 - the document matters more
+            warnings.append(f"Bỏ qua liên kết file đính kèm ({exc}); đọc bản gốc.")
+            result = convert(source.open("rb"))
 
     warnings.extend(message.message for message in result.messages)
     markdown = html_to_markdown(
@@ -200,12 +220,13 @@ def word_to_markdown(
     options: ConversionOptions | None = None,
     image_dir: Path | None = None,
     upgrader: LegacyUpgrader | None = None,
+    attachment_dir: Path | None = None,
 ) -> tuple[str, list[str]]:
     """Convert .docx directly, or .doc after upgrading it to .docx."""
     options = options or ConversionOptions()
     source = Path(source)
     if source.suffix.lower() not in LEGACY_WORD:
-        return docx_to_markdown(source, options, image_dir)
+        return docx_to_markdown(source, options, image_dir, None, attachment_dir)
 
     owns = upgrader is None
     upgrader = upgrader or LegacyUpgrader()
@@ -215,7 +236,9 @@ def word_to_markdown(
         except LegacyConversionError as exc:
             markdown, warnings = _doc_text_fallback(source, options, exc)
             return markdown, warnings
-        markdown, more = docx_to_markdown(upgraded, options, image_dir, source.stem)
+        markdown, more = docx_to_markdown(
+            upgraded, options, image_dir, source.stem, attachment_dir
+        )
         return markdown, warnings + more
     finally:
         if owns:
@@ -339,9 +362,12 @@ def convert_docx_sections(
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         image_dir = output_dir / f"{source.stem}_images"
+        attachment_dir = output_dir / f"{source.stem}_attachments"
         convert_options = replace(options, add_title_heading=False)
         readable, title, warnings = ensure_docx(source, upgrader)
-        markdown, more = docx_to_markdown(readable, convert_options, image_dir, title)
+        markdown, more = docx_to_markdown(
+            readable, convert_options, image_dir, title, attachment_dir
+        )
         warnings = warnings + more
         roots = build_outline(markdown)
         selected = top_level_selection(roots, node_ids)
@@ -601,7 +627,10 @@ def convert_file(
 
         if suffix in WORD_EXTENSIONS:
             image_dir = destination.parent / f"{destination.stem}_images"
-            markdown, warnings = word_to_markdown(source, options, image_dir, upgrader)
+            attachment_dir = destination.parent / f"{destination.stem}_attachments"
+            markdown, warnings = word_to_markdown(
+                source, options, image_dir, upgrader, attachment_dir
+            )
         else:
             markdown, warnings = excel_to_markdown(source, options, upgrader)
 

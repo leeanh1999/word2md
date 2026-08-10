@@ -15,6 +15,8 @@ files to **Markdown (.md)**, with drag-and-drop and batch processing.
   is processed.
 - Choose the output folder, with an option to overwrite or auto-number `name (1).md`.
 - **Extract parts of a Word document by section** (see below).
+- **Files attached to a Word document** (PDF, HTML, ZIP…) are written out in their real
+  format instead of the `.emf` icon Word shows for them.
 - Command-line mode for automation.
 
 ## Section extraction (Navigation Pane)
@@ -54,6 +56,38 @@ Preserved: `h1`–`h6` headings, paragraphs, bold / italic / strikethrough, orde
 unordered lists (including nesting), tables, blockquotes, code blocks, links and images.
 Embedded images are written to a `<filename>_images/` folder and referenced by relative
 path.
+
+### Attached files (OLE objects)
+
+A file attached to a Word document — a PDF, an HTML page, a ZIP, a spreadsheet — is
+stored twice: as an `.emf` icon that Word draws on the page, and as the file itself,
+wrapped in an OLE container under `word/embeddings/`. Mammoth only ever sees the icon,
+so attachments used to come out as meaningless `.emf` images.
+
+`src/attachments.py` unwraps the container, writes each attachment to a
+`<filename>_attachments/` folder **in its original format and under its original
+name**, and rewrites the document so mammoth reads a hyperlink where the object was:
+
+```markdown
+[báo cáo.pdf](report_attachments/b%C3%A1o%20c%C3%A1o.pdf) is attached.
+```
+
+Details:
+
+- The file name comes from the UTF-16 copy Word stores in the `\x01Ole10Native`
+  stream, so Vietnamese names survive; the ANSI copy next to it mangles them.
+- An object with no name, or none the container reveals, is named after its content
+  signature (`%PDF-` → `.pdf`, `PK` → `.zip`, …).
+- Office files embedded as OOXML parts (`Excel.Sheet.12` and friends) are copied out
+  as-is; old binary containers become `.doc` / `.xls` / `.ppt`.
+- An object shown **as content** rather than as an icon keeps its picture and gains a
+  link after it. An object nothing can unwrap — an equation, say — is left exactly as
+  it was.
+- A **linked** object is not copied: the link points at the original path.
+- Rewriting the document is done on an in-memory copy; if anything about it upsets
+  mammoth, the original file is read instead and the conversion still completes.
+
+Turn it off with `--no-attachments`, or the *"Tách file đính kèm"* checkbox.
 
 ### Excel → Markdown
 
@@ -109,6 +143,7 @@ word2md/
 ├── requirements-dev.txt       # + pyinstaller, python-docx (sample generation)
 ├── src/
 │   ├── converter.py           # Core engine
+│   ├── attachments.py         # OLE objects -> real files + links
 │   ├── html_to_markdown.py    # HTML (mammoth) -> Markdown
 │   ├── legacy.py              # .doc/.xls backends + OLE parser
 │   ├── outline.py             # Outline tree + partial extraction
@@ -117,6 +152,7 @@ word2md/
 ├── tests/
 │   ├── make_samples.py        # Generates test.docx / test.xlsx / corrupt.docx
 │   ├── test_converter.py      # Unit tests for the engine and HTML -> Markdown
+│   ├── test_attachments.py    # Unit tests for OLE attachments
 │   ├── test_outline.py        # Unit tests for the outline and extraction
 │   ├── test_legacy.py         # Unit tests for .doc/.xls
 │   └── test_gui_smoke.py      # Builds a real window, runs a batch + section picker
@@ -155,8 +191,8 @@ python -m venv .venv
 1.2         2. Task list  [H2, 6 lines]
 ```
 
-CLI options: `-o/--output`, `--no-recursive`, `--no-images`, `--overwrite`,
-`--no-title`, `--backends`, `--list-sections`, `--sections ID[,ID…]`,
+CLI options: `-o/--output`, `--no-recursive`, `--no-images`, `--no-attachments`,
+`--overwrite`, `--no-title`, `--backends`, `--list-sections`, `--sections ID[,ID…]`,
 `--split-sections`, `--no-promote`. The `--sections` group accepts exactly one Word
 file. Exit codes: `0` success, `1` bad arguments / file not found, `2` some files
 failed.
@@ -226,7 +262,7 @@ pandas==2.3.3; platform_machine != "ARM64"
 pandas>=3.0.5; platform_machine == "ARM64"
 ```
 
-All 81 tests pass on pandas 3.0.5 and the Markdown output is identical to pandas 2.3.3.
+All 94 tests pass on pandas 3.0.5 and the Markdown output is identical to pandas 2.3.3.
 
 Without an ARM64 build, the x64 one still runs on Windows on ARM through the Prism
 emulation layer, just slower.
@@ -239,4 +275,7 @@ emulation layer, just slower.
   headings with large or bold text produce no outline — Word's own Navigation Pane is
   empty for them too.
 - Merged cells in Word tables are flattened, because Markdown has no colspan/rowspan.
+- Pictures that are genuinely `.emf` / `.wmf` in the document (pasted charts and
+  drawings) are still written out in that format: they are images, not attachments,
+  and converting vector metafiles would need a rendering engine.
 - Files currently open in Word/Excel may raise a permission error; close them and retry.

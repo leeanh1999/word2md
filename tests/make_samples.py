@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -109,6 +111,156 @@ def make_xlsx(path: Path) -> Path:
     return path
 
 
+# --------------------------------------------------------- OLE attachments
+
+# Word wraps an attached file in an OLE container and only shows an .emf icon
+# for it. Building one by hand keeps the attachment tests running on machines
+# without Microsoft Office.
+
+_PACKAGE_CLSID = bytes.fromhex("0C000300" + "0000" + "0000" + "C000000000000046")
+
+ATTACHMENTS = {
+    "báo cáo.pdf": b"%PDF-1.4\n% ".ljust(4200, b"-") + b"\n%%EOF\n",
+    "trang web.html": (
+        "<html><body><h1>Xin chào</h1><p>".encode("utf-8")
+        + b"x" * 4200
+        + b"</p></body></html>"
+    ),
+}
+
+
+def _ole10_native(label: str, data: bytes) -> bytes:
+    """The `\\x01Ole10Native` stream Word writes for a packaged file."""
+    source = f"D:\\nguon\\{label}"
+    command = f"C:\\\\Temp\\\\{label}".encode("cp1252", "replace") + b"\0"
+
+    def utf16(text: str) -> bytes:
+        return struct.pack("<I", len(text)) + text.encode("utf-16-le")
+
+    body = (
+        struct.pack("<H", 2)
+        + label.encode("cp1252", "replace")
+        + b"\0"
+        + source.encode("cp1252", "replace")
+        + b"\0"
+        + struct.pack("<HH", 0, 3)
+        + struct.pack("<I", len(command))
+        + command
+        + struct.pack("<I", len(data))
+        + data
+        + utf16(f"C:\\Temp\\{label}")
+        + utf16(label)
+        + utf16(f"D:\\nguồn\\{label}")
+    )
+    return struct.pack("<I", len(body)) + body
+
+
+def _compound_file(stream_name: str, payload: bytes) -> bytes:
+    """A minimal v3 compound file holding one stream.
+
+    Sector 0 is the FAT, sector 1 the directory, the rest is the payload. The
+    stream has to clear the 4096-byte cut-off so it lives in normal sectors
+    and no mini FAT is needed.
+    """
+    if len(payload) < 4096 or len(payload) > 126 * 512:
+        raise ValueError("Stream phải nằm trong khoảng 4 KB - 63 KB.")
+
+    end, free, fat_mark, none = 0xFFFFFFFE, 0xFFFFFFFF, 0xFFFFFFFD, 0xFFFFFFFF
+    sectors = -(-len(payload) // 512)
+
+    header = (
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+        + bytes(16)
+        + struct.pack("<HHHHH", 0x003E, 3, 0xFFFE, 9, 6)
+        + bytes(6)
+        + struct.pack("<IIIIIIIII", 0, 1, 1, 0, 4096, end, 0, end, 0)
+        + struct.pack("<I", 0)
+        + struct.pack("<108I", *([free] * 108))
+    )
+
+    chain = [fat_mark, end] + [3 + index for index in range(sectors - 1)] + [end]
+    fat = struct.pack("<128I", *(chain + [free] * (128 - len(chain))))
+
+    def entry(name: str, kind: int, child: int, start: int, size: int) -> bytes:
+        encoded = name.encode("utf-16-le") + b"\0\0"
+        return (
+            encoded.ljust(64, b"\0")
+            + struct.pack("<HBB", len(encoded), kind, 1)
+            + struct.pack("<III", none, none, child)
+            + (_PACKAGE_CLSID if kind == 5 else bytes(16))
+            + bytes(4 + 8 + 8)
+            + struct.pack("<IQ", start, size)
+        )
+
+    directory = (
+        entry("Root Entry", 5, 1, end, 0)
+        + entry(stream_name, 2, none, 2, len(payload))
+        + bytes(256)
+    )
+
+    return header + fat + directory + payload.ljust(sectors * 512, b"\0")
+
+
+def make_attachments_docx(base: Path, path: Path) -> Path:
+    """Copy a .docx and graft OLE attachments onto the end of the body."""
+    icon = b"\x01\x00\x00\x00" + bytes(84)  # enough of an .emf header to link
+    paragraphs = []
+    extra: dict[str, bytes] = {"word/media/icon1.emf": icon}
+    relationships = [
+        '<Relationship Id="rIdIcon" Type="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/relationships/image" Target="media/icon1.emf"/>'
+    ]
+
+    for index, (name, data) in enumerate(ATTACHMENTS.items(), start=1):
+        part = f"embeddings/oleObject{index}.bin"
+        extra[f"word/{part}"] = _compound_file(
+            "\x01Ole10Native", _ole10_native(name, data)
+        )
+        relationships.append(
+            f'<Relationship Id="rIdOle{index}" Type="http://schemas.openxmlformats'
+            f'.org/officeDocument/2006/relationships/oleObject" Target="{part}"/>'
+        )
+        paragraphs.append(
+            "<w:p><w:r>"
+            '<w:object w:dxaOrig="1535" w:dyaOrig="998">'
+            f'<v:shape id="_x0000_i{1024 + index}" type="#_x0000_t75" o:ole="">'
+            '<v:imagedata r:id="rIdIcon" o:title=""/></v:shape>'
+            f'<o:OLEObject Type="Embed" ProgID="Package" DrawAspect="Icon" '
+            f'ObjectID="_{index}" r:id="rIdOle{index}"/>'
+            "</w:object></w:r>"
+            f'<w:r><w:t xml:space="preserve"> là tệp đính kèm.</w:t></w:r></w:p>'
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(base) as source, zipfile.ZipFile(
+        path, "w", zipfile.ZIP_DEFLATED
+    ) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename == "word/document.xml":
+                text = content.decode("utf-8").replace(
+                    "</w:body>", "".join(paragraphs) + "</w:body>"
+                )
+                content = text.encode("utf-8")
+            elif item.filename == "word/_rels/document.xml.rels":
+                text = content.decode("utf-8").replace(
+                    "</Relationships>", "".join(relationships) + "</Relationships>"
+                )
+                content = text.encode("utf-8")
+            elif item.filename == "[Content_Types].xml":
+                text = content.decode("utf-8").replace(
+                    "</Types>",
+                    '<Default Extension="emf" ContentType="image/x-emf"/>'
+                    '<Default Extension="bin" ContentType="application/'
+                    'vnd.openxmlformats-officedocument.oleObject"/></Types>',
+                )
+                content = text.encode("utf-8")
+            target.writestr(item, content)
+        for name, blob in extra.items():
+            target.writestr(name, blob)
+    return path
+
+
 def make_corrupt(path: Path) -> Path:
     """A file with a valid extension but garbage content, to test error handling."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +325,7 @@ def build_all(directory: Path = SAMPLES_DIR, legacy: bool = True) -> dict[str, P
     samples = {
         "docx": docx,
         "xlsx": xlsx,
+        "attachments": make_attachments_docx(docx, directory / "attachments.docx"),
         "corrupt": make_corrupt(directory / "corrupt.docx"),
         "fake_doc": make_mislabelled(docx, directory / "mislabelled.doc"),
         "fake_xls": make_mislabelled(xlsx, directory / "mislabelled.xls"),

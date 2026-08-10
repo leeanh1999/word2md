@@ -76,6 +76,11 @@ def _run_cli(argv: list[str]) -> int:
     parser.add_argument("-o", "--output", default="output", help="Thư mục lưu file .md")
     parser.add_argument("--no-recursive", action="store_true", help="Không quét thư mục con")
     parser.add_argument("--no-images", action="store_true", help="Bỏ qua ảnh trong Word")
+    parser.add_argument(
+        "--no-attachments",
+        action="store_true",
+        help="Không tách file đính kèm (OLE) ra khỏi Word",
+    )
     parser.add_argument("--overwrite", action="store_true", help="Ghi đè file trùng tên")
     parser.add_argument("--no-title", action="store_true", help="Không thêm tiêu đề H1")
 
@@ -117,6 +122,7 @@ def _run_cli(argv: list[str]) -> int:
 
     options = ConversionOptions(
         extract_images=not args.no_images,
+        extract_attachments=not args.no_attachments,
         overwrite=args.overwrite,
         add_title_heading=not args.no_title,
         promote_headings=not args.no_promote,
