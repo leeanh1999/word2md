@@ -1,20 +1,28 @@
 # word2md
 
 Desktop app that converts **Word (.docx, .doc)** and **Excel (.xlsx, .xlsm, .xls)**
-files to **Markdown (.md)**, with drag-and-drop and batch processing.
+files to **Markdown (.md)** — and **Markdown back to Word (.docx)** — with
+drag-and-drop and batch processing.
 
 ## Features
 
-- `customtkinter` interface (light / dark / follow system).
+- `customtkinter` interface (light / dark / follow system), with **one tab per
+  direction** — *Word / Excel → Markdown* and *Markdown → Word* — each with its own
+  file queue and its own options.
 - Drag & drop files or whole folders onto the window (via `tkinterdnd2`), or use the
   picker buttons.
-- Pick a folder → every Word/Excel file inside is found recursively.
+- Pick a folder → every convertible file inside is found recursively and sent to the
+  tab that handles it.
 - Progress bar plus a per-file status list (pending / working / OK / error).
 - Conversion runs on a background thread with a cancel button; the UI never freezes.
 - One bad file does **not** stop the batch: the error is recorded and the next file
   is processed.
 - Choose the output folder, with an option to overwrite or auto-number `name (1).md`.
 - **Extract parts of a Word document by section** (see below).
+- **Markdown back to Word**: drop a `.md` file in and get a real `.docx` with Word
+  headings, lists, tables and embedded images — with a **font picker** (every font
+  installed on the machine), font size, paper size, line spacing, a page break before
+  each `H1` and an optional automatic table of contents.
 - **Files attached to a Word document** (PDF, HTML, ZIP…) are written out in their real
   format instead of the `.emf` icon Word shows for them.
 - Command-line mode for automation.
@@ -104,6 +112,64 @@ Details:
 
 Turn it off with `--no-attachments`, or the *"Tách file đính kèm"* checkbox.
 
+### Markdown → Word
+
+Dropping a `.md` file in reverses the direction: `src/md_to_docx.py` parses the
+Markdown itself — no third-party parser — and writes the document with `python-docx`.
+
+Converted: ATX and setext headings, paragraphs with hard breaks, bold / italic /
+strikethrough / inline code, links and autolinks, images, ordered and unordered lists
+(nested, with task-list checkboxes), tables with column alignment, block quotes, fenced
+and indented code blocks, horizontal rules, `<sup>` / `<sub>`, and backslash escapes.
+YAML front matter is read as metadata and fills the document properties instead of
+appearing in the text.
+
+What the output looks like is up to you. The defaults are **Times New Roman 13 pt**,
+A4, line spacing 1.15 — the font a document gets when nothing is chosen:
+
+| Option | GUI | CLI | Default |
+|---|---|---|---|
+| Font | dropdown of installed fonts (typing is allowed) | `--font` | Times New Roman |
+| Size | dropdown | `--font-size` | 13 pt |
+| Paper | dropdown | `--page-size` | A4 (also Letter, Legal) |
+| Line spacing | dropdown | `--line-spacing` | 1.15 |
+| Page break before every H1 | checkbox | `--page-break-h1` | off |
+| Table of contents | checkbox | `--toc` | off |
+| Embed images | checkbox | `--no-images` to skip | on |
+| H1 from the file name | checkbox | `--no-title` to skip | on |
+
+The chosen font is written into the theme as well as into `Normal`, so the built-in
+heading styles follow it instead of quietly staying on the template's Calibri. Code
+blocks keep Consolas — a monospace face is the point of them.
+
+**Everything is black.** Word's built-in headings are blue through
+`themeColor="accent1"`, which outranks any colour set beside it, so the theme reference
+is stripped from every style the document uses — headings, title, quotes and hyperlinks
+alike (a link keeps its underline). The accent-coloured rules under `Title` and
+`Intense Quote` are repainted black for the same reason.
+
+The table of contents is Word's own `TOC` field, and the document is marked
+`updateFields`, so Word offers to fill it in the first time the file is opened.
+
+Details worth knowing:
+
+- **Images are embedded, not linked.** A relative `![alt](doc_images/x.png)` is resolved
+  against the folder of the `.md` file and inserted into the document, scaled down to
+  the page width when it is too wide. A remote `https://…` image is not downloaded: its
+  alt text is written instead and a warning is reported. `--no-images` skips embedding
+  entirely.
+- **Links to attachments keep working.** `[báo cáo.pdf](report_attachments/….pdf)`
+  becomes a Word hyperlink with the same relative target, so a document converted to
+  Markdown and back still points at the files next to it.
+- **Every list gets its own Word numbering instance**, so a second ordered list starts
+  at 1 again instead of continuing the first, and `3. …` still starts at 3.
+- **Styles are chosen so the trip is reversible.** Code blocks use a `Code` paragraph
+  style and inline code a `Code Char` character style — exactly the names
+  `DOCX_STYLE_MAP` maps back to `<pre>` and `<code>` — so `.docx → .md → .docx` returns
+  the structure it started with.
+- Pages are A4, and the document is given an H1 from the file name only when the
+  Markdown has none of its own (`--no-title` turns that off).
+
 ### Excel → Markdown
 
 `pandas` + `openpyxl` read **all** sheets. Each sheet becomes a `## Sheet name` section
@@ -155,11 +221,12 @@ word2md/
 ├── build.bat / run.bat        # Windows helpers
 ├── .github/workflows/build.yml # CI: builds both x64 and ARM64
 ├── requirements.txt           # Runtime dependencies
-├── requirements-dev.txt       # + pyinstaller, python-docx (sample generation)
+├── requirements-dev.txt       # + pyinstaller
 ├── src/
 │   ├── converter.py           # Core engine
 │   ├── attachments.py         # OLE objects -> real files + links
 │   ├── html_to_markdown.py    # HTML (mammoth) -> Markdown
+│   ├── md_to_docx.py          # Markdown -> Word (python-docx)
 │   ├── legacy.py              # .doc/.xls backends + OLE parser
 │   ├── outline.py             # Outline tree + partial extraction
 │   ├── section_dialog.py      # Section picker window
@@ -167,6 +234,7 @@ word2md/
 ├── tests/
 │   ├── make_samples.py        # Generates test.docx / test.xlsx / corrupt.docx
 │   ├── test_converter.py      # Unit tests for the engine and HTML -> Markdown
+│   ├── test_md_to_docx.py     # Unit tests for Markdown -> Word (+ round trips)
 │   ├── test_attachments.py    # Unit tests for OLE attachments
 │   ├── test_outline.py        # Unit tests for the outline and extraction
 │   ├── test_legacy.py         # Unit tests for .doc/.xls
@@ -192,6 +260,11 @@ python -m venv .venv
 .venv\Scripts\python.exe main.py report.docx data.xlsx -o output
 .venv\Scripts\python.exe main.py .\documents -o .\md --overwrite
 
+# The other way round: Markdown -> Word
+.venv\Scripts\python.exe main.py notes.md -o output
+.venv\Scripts\python.exe main.py .\md -o .\docx --overwrite
+.venv\Scripts\python.exe main.py notes.md --font Arial --font-size 12 --toc
+
 # Section extraction
 .venv\Scripts\python.exe main.py report.docx --list-sections
 .venv\Scripts\python.exe main.py report.docx --sections 2,3.1 -o output
@@ -207,8 +280,9 @@ python -m venv .venv
 ```
 
 CLI options: `-o/--output`, `--no-recursive`, `--no-images`, `--no-attachments`,
-`--overwrite`, `--no-title`, `--backends`, `--list-sections`, `--sections ID[,ID…]`,
-`--split-sections`, `--no-promote`. The `--sections` group accepts exactly one Word
+`--overwrite`, `--no-title`, `--backends`, `--font`, `--font-size`, `--page-size`,
+`--line-spacing`, `--page-break-h1`, `--toc`, `--list-sections`,
+`--sections ID[,ID…]`, `--split-sections`, `--no-promote`. The `--sections` group accepts exactly one Word
 file. Exit codes: `0` success, `1` bad arguments / file not found, `2` some files
 failed.
 
@@ -235,14 +309,15 @@ The equivalent PyInstaller command:
 
 ```powershell
 pyinstaller --noconfirm --clean --onefile --noconsole --name word2md-x64 `
-    --collect-data customtkinter --collect-all tkinterdnd2 `
+    --collect-data customtkinter --collect-all tkinterdnd2 --collect-data docx `
     --hidden-import tabulate --hidden-import openpyxl `
     main.py
 ```
 
 `--collect-data customtkinter` bundles the theme JSON files, `--collect-all tkinterdnd2`
-bundles the `tkdnd` native library, and `tabulate` must be declared explicitly because
-`pandas` only imports it at runtime inside `to_markdown()`.
+bundles the `tkdnd` native library, `--collect-data docx` bundles the blank template
+every generated `.docx` is built from, and `tabulate` must be declared explicitly
+because `pandas` only imports it at runtime inside `to_markdown()`.
 
 Drop an icon at `assets/icon.ico` and `build.py` will pick it up automatically.
 
@@ -273,8 +348,8 @@ Pushing a `v*` tag runs the tests, builds both executables and publishes them as
 GitHub Release:
 
 ```powershell
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.3.0
+git push origin v1.3.0
 ```
 
 The release job waits for both architectures, so a release never ships with one of
@@ -290,7 +365,7 @@ pandas==2.3.3; platform_machine != "ARM64"
 pandas>=3.0.5; platform_machine == "ARM64"
 ```
 
-All 103 tests pass on pandas 3.0.5 and the Markdown output is identical to pandas 2.3.3.
+All 148 tests pass on pandas 3.0.5 and the Markdown output is identical to pandas 2.3.3.
 
 Without an ARM64 build, the x64 one still runs on Windows on ARM through the Prism
 emulation layer, just slower.
@@ -307,3 +382,9 @@ emulation layer, just slower.
   drawings) are still written out in that format: they are images, not attachments,
   and converting vector metafiles would need a rendering engine.
 - Files currently open in Word/Excel may raise a permission error; close them and retry.
+- Markdown → Word covers the Markdown this app produces plus common CommonMark; raw
+  HTML blocks, footnotes, definition lists and reference-style links are not
+  interpreted. Table column alignment reaches the `.docx` but not the Markdown coming
+  back, and a fenced block's language is dropped — Word has nowhere to keep it.
+- A folder containing both the sources and their `output\` subfolder converts the
+  results too on the next run: `.md` is now an input format as well.

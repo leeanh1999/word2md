@@ -198,6 +198,10 @@ def build(
         "customtkinter",
         "--collect-all",
         "tkinterdnd2",
+        # python-docx builds every .docx from a template that ships as package
+        # data, invisible to static analysis.
+        "--collect-data",
+        "docx",
         # pandas imports its optional dependencies lazily: tabulate inside
         # DataFrame.to_markdown(), and the Excel engines on first read.
         "--hidden-import",

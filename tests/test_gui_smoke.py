@@ -114,6 +114,63 @@ def check_app_wiring(app, docx: Path, out_dir: Path) -> None:
     print(f"\nApp wiring OK -> {results[0].output.name}")
 
 
+def check_markdown_tab(app, tmp_path: Path, out_dir: Path) -> None:
+    """Run the Markdown -> Word tab end to end, with a chosen font."""
+    import time
+
+    import docx
+    from docx.oxml.ns import qn
+
+    from src.gui import TAB_TO_MARKDOWN, TAB_TO_WORD
+
+    source = tmp_path / "ghi chú.md"
+    source.write_text(
+        "# Báo cáo\n\nĐoạn **đậm**.\n\n- một\n- hai\n", encoding="utf-8"
+    )
+
+    app.add_paths([source])
+    app.root.update()
+    assert app.tabs.get() == TAB_TO_WORD, "dropping a .md must switch tabs"
+    assert app.files == [source], app.files
+    assert source not in app.queues[TAB_TO_MARKDOWN].files, "wrong tab took the .md"
+
+    app.font_name.set("Arial")
+    app.font_size.set("14")
+    app.page_size.set("Letter")
+    app.table_of_contents.set(True)
+    app.output_dir.set(str(out_dir))
+
+    reported = []
+    original_report, app._report = app._report, reported.append
+    try:
+        app.start_conversion()
+        deadline = time.time() + 60
+        while (app._is_running() or not reported) and time.time() < deadline:
+            app.root.update()
+            time.sleep(0.02)
+    finally:
+        app._report = original_report
+
+    assert reported, "the Markdown tab produced no result"
+    result = reported[0][0]
+    assert result.status == "success", result.message
+    produced = out_dir / "ghi chú.docx"
+    assert produced.is_file(), sorted(p.name for p in out_dir.iterdir())
+
+    document = docx.Document(str(produced))
+    normal = document.styles["Normal"]
+    face = normal.element.get_or_add_rPr().get_or_add_rFonts().get(qn("w:ascii"))
+    assert face == "Arial", face
+    assert normal.font.size.pt == 14, normal.font.size.pt
+    assert document.sections[0].page_width == 7772400, "Letter width expected"
+    assert "Mục lục" in [p.text for p in document.paragraphs]
+    print(f"\nMarkdown tab OK -> {produced.name} ({face} {normal.font.size.pt:g}pt)")
+
+    app.queues[TAB_TO_WORD].clear()
+    app.tabs.set(TAB_TO_MARKDOWN)
+    app.root.update()
+
+
 def main() -> int:
     from src.gui import DND_AVAILABLE, App
     from src.gui import legacy_support_note as gui_legacy_note
@@ -165,6 +222,7 @@ def main() -> int:
 
         check_section_dialog(app, samples["docx"], tmp_path / "sections")
         check_app_wiring(app, samples["docx"], tmp_path / "wired")
+        check_markdown_tab(app, tmp_path, tmp_path / "docx_out")
 
         app.clear_files()
         app.root.update()

@@ -1,4 +1,4 @@
-"""Core conversion engine: Word (.docx) and Excel (.xlsx) -> Markdown (.md)."""
+"""Core conversion engine: Word/Excel -> Markdown, and Markdown -> Word."""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from .legacy import (
     doc_text_to_markdown,
     sniff,
 )
+from .md_to_docx import MARKDOWN_EXTENSIONS, DocxSettings, markdown_to_docx
 from .outline import (
     OutlineNode,
     build_outline,
@@ -42,7 +43,7 @@ from .outline import (
 
 WORD_EXTENSIONS = {".docx", ".doc"}
 EXCEL_EXTENSIONS = {".xlsx", ".xlsm", ".xls"}
-SUPPORTED_EXTENSIONS = WORD_EXTENSIONS | EXCEL_EXTENSIONS
+SUPPORTED_EXTENSIONS = WORD_EXTENSIONS | EXCEL_EXTENSIONS | MARKDOWN_EXTENSIONS
 
 STATUS_SUCCESS = "success"
 STATUS_ERROR = "error"
@@ -74,6 +75,8 @@ class ConversionOptions:
     sheet_heading_level: int = 2
     promote_headings: bool = True
     split_sections: bool = False
+    # Only used by the Markdown -> Word direction.
+    docx: DocxSettings = field(default_factory=DocxSettings)
 
 
 @dataclass
@@ -127,14 +130,22 @@ def collect_files(paths: Iterable[str | Path], recursive: bool = True) -> list[P
     return sorted(found, key=lambda p: str(p).lower())
 
 
-def target_path(source: Path, output_dir: Path, overwrite: bool = False) -> Path:
+def output_suffix(source: Path) -> str:
+    """Markdown goes back to Word; everything else comes out as Markdown."""
+    return ".docx" if source.suffix.lower() in MARKDOWN_EXTENSIONS else ".md"
+
+
+def target_path(
+    source: Path, output_dir: Path, overwrite: bool = False, suffix: str | None = None
+) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    target = output_dir / f"{source.stem}.md"
+    suffix = suffix or output_suffix(source)
+    target = output_dir / f"{source.stem}{suffix}"
     if overwrite:
         return target
     counter = 1
     while target.exists():
-        target = output_dir / f"{source.stem} ({counter}).md"
+        target = output_dir / f"{source.stem} ({counter}){suffix}"
         counter += 1
     return target
 
@@ -521,7 +532,7 @@ def _write_section(
 
     try:
         destination = target_path(
-            Path(f"{stem}.md"), output_dir, overwrite=options.overwrite
+            Path(f"{stem}.md"), output_dir, overwrite=options.overwrite, suffix=".md"
         )
         if staged:
             body = _relocate_assets(body, destination, staged)
@@ -714,6 +725,16 @@ def convert_file(
             return finish(STATUS_SKIPPED, f"Bỏ qua định dạng {suffix or '(không rõ)'}.")
 
         destination = target_path(source, output_dir, overwrite=options.overwrite)
+
+        if suffix in MARKDOWN_EXTENSIONS:
+            warnings = markdown_to_docx(
+                source,
+                destination,
+                embed_images=options.extract_images,
+                add_title_heading=options.add_title_heading,
+                settings=options.docx,
+            )
+            return finish(STATUS_SUCCESS, "Chuyển đổi thành công.", destination, warnings)
 
         if suffix in WORD_EXTENSIONS:
             image_dir = destination.parent / f"{destination.stem}_images"

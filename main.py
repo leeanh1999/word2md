@@ -6,6 +6,10 @@ convert from the command line:
     python main.py report.docx data.xlsx -o output
     python main.py .\\documents -o .\\md
 
+Markdown goes the other way, back into Word:
+
+    python main.py report.md -o output
+
 Partial extraction follows the document's navigation outline:
 
     python main.py report.docx --list-sections
@@ -61,6 +65,13 @@ def _run_cli(argv: list[str]) -> int:
         convert_many,
         summarize,
     )
+    from src.md_to_docx import (
+        DEFAULT_FONT,
+        DEFAULT_FONT_SIZE,
+        DEFAULT_LINE_SPACING,
+        PAGE_SIZES,
+        DocxSettings,
+    )
 
     parser = argparse.ArgumentParser(
         prog="word2md", description=f"{__app_name__} v{__version__}"
@@ -73,16 +84,55 @@ def _run_cli(argv: list[str]) -> int:
         action="store_true",
         help="Liệt kê backend đọc được .doc/.xls trên máy này rồi thoát",
     )
-    parser.add_argument("-o", "--output", default="output", help="Thư mục lưu file .md")
+    parser.add_argument(
+        "-o", "--output", default="output", help="Thư mục lưu kết quả"
+    )
     parser.add_argument("--no-recursive", action="store_true", help="Không quét thư mục con")
-    parser.add_argument("--no-images", action="store_true", help="Bỏ qua ảnh trong Word")
+    parser.add_argument(
+        "--no-images",
+        action="store_true",
+        help="Bỏ qua ảnh (không tách khỏi Word, không chèn lại vào .docx)",
+    )
     parser.add_argument(
         "--no-attachments",
         action="store_true",
         help="Không tách file đính kèm (OLE) ra khỏi Word",
     )
     parser.add_argument("--overwrite", action="store_true", help="Ghi đè file trùng tên")
-    parser.add_argument("--no-title", action="store_true", help="Không thêm tiêu đề H1")
+    parser.add_argument(
+        "--no-title", action="store_true", help="Không thêm tiêu đề từ tên file"
+    )
+
+    docx_group = parser.add_argument_group("Markdown → Word (chỉ với file .md)")
+    docx_group.add_argument(
+        "--font", default=DEFAULT_FONT, help=f"Font chữ, mặc định {DEFAULT_FONT}"
+    )
+    docx_group.add_argument(
+        "--font-size",
+        type=float,
+        default=DEFAULT_FONT_SIZE,
+        help=f"Cỡ chữ (pt), mặc định {DEFAULT_FONT_SIZE:g}",
+    )
+    docx_group.add_argument(
+        "--page-size",
+        choices=sorted(PAGE_SIZES),
+        default="A4",
+        help="Khổ giấy, mặc định A4",
+    )
+    docx_group.add_argument(
+        "--line-spacing",
+        type=float,
+        default=DEFAULT_LINE_SPACING,
+        help=f"Giãn dòng, mặc định {DEFAULT_LINE_SPACING:g}",
+    )
+    docx_group.add_argument(
+        "--page-break-h1",
+        action="store_true",
+        help="Ngắt trang trước mỗi tiêu đề cấp 1",
+    )
+    docx_group.add_argument(
+        "--toc", action="store_true", help="Chèn mục lục tự động ở đầu tài liệu"
+    )
 
     sections = parser.add_argument_group("Trích xuất một phần (chỉ với 1 file Word)")
     sections.add_argument(
@@ -117,7 +167,7 @@ def _run_cli(argv: list[str]) -> int:
 
     files = collect_files(args.inputs, recursive=not args.no_recursive)
     if not files:
-        print("Không tìm thấy file Word/Excel nào.", file=sys.stderr)
+        print("Không tìm thấy file Word/Excel/Markdown nào.", file=sys.stderr)
         return 1
 
     options = ConversionOptions(
@@ -127,6 +177,14 @@ def _run_cli(argv: list[str]) -> int:
         add_title_heading=not args.no_title,
         promote_headings=not args.no_promote,
         split_sections=args.split_sections,
+        docx=DocxSettings(
+            font=args.font,
+            font_size=args.font_size,
+            page_size=args.page_size,
+            line_spacing=args.line_spacing,
+            page_break_before_h1=args.page_break_h1,
+            table_of_contents=args.toc,
+        ),
     )
 
     if args.list_sections or args.sections:
