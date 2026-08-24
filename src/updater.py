@@ -299,6 +299,28 @@ def apply_update(new_exe: Path, exe: Path | None = None, restart: bool = True) -
     return exe
 
 
+# The one-file bootloader hands these to the app it starts, so the app can
+# find the folder it was unpacked into. A child that inherits them runs out of
+# *this* executable's unpacked folder instead of its own, which for a different
+# build means half-loaded packages ("cannot import name 'ops' from
+# 'pandas._libs'") and a dead successor.
+BOOTLOADER_ENV = (
+    "_PYI_APPLICATION_HOME_DIR",
+    "_PYI_ARCHIVE_FILE",
+    "_PYI_PARENT_PROCESS_LEVEL",
+    "_PYI_SPLASH_IPC",
+    "_MEIPASS2",  # PyInstaller 5 and earlier
+)
+
+
+def clean_environment(env: dict | None = None) -> dict:
+    """A copy of the environment with the bootloader's own variables removed."""
+    env = dict(os.environ if env is None else env)
+    for name in BOOTLOADER_ENV:
+        env.pop(name, None)
+    return env
+
+
 def relaunch(exe: Path) -> None:
     """Start the new executable and leave. Never returns."""
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
@@ -309,6 +331,7 @@ def relaunch(exe: Path) -> None:
             [str(exe)],
             close_fds=True,
             cwd=str(exe.parent),
+            env=clean_environment(),
             creationflags=flags if os.name == "nt" else 0,
         )
     except OSError as exc:

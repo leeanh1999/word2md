@@ -196,6 +196,30 @@ class ApplyTests(unittest.TestCase):
         self.assertFalse(self.staged.exists())
         self.assertTrue(self.exe.exists())  # the live executable is untouched
 
+    def test_relaunch_drops_the_bootloader_variables(self):
+        """The successor must unpack itself, not reuse this build's folder."""
+        env = {
+            "PATH": "keep me",
+            "_PYI_APPLICATION_HOME_DIR": r"C:\Temp\_MEI49282",
+            "_PYI_ARCHIVE_FILE": r"C:\old\word2md-x64.exe",
+            "_PYI_PARENT_PROCESS_LEVEL": "1",
+            "_MEIPASS2": r"C:\Temp\_MEI49282",
+        }
+        cleaned = updater.clean_environment(env)
+        self.assertEqual(cleaned, {"PATH": "keep me"})
+        self.assertEqual(env["_MEIPASS2"], r"C:\Temp\_MEI49282")  # input untouched
+
+    def test_relaunch_starts_the_new_executable_with_a_clean_environment(self):
+        with mock.patch.dict(
+            updater.os.environ, {"_PYI_APPLICATION_HOME_DIR": r"C:\Temp\_MEI1"}
+        ), mock.patch.object(updater.subprocess, "Popen") as popen, mock.patch.object(
+            updater.os, "_exit", side_effect=SystemExit
+        ):
+            with self.assertRaises(SystemExit):
+                updater.relaunch(self.exe)
+        self.assertEqual(popen.call_args.args[0], [str(self.exe)])
+        self.assertNotIn("_PYI_APPLICATION_HOME_DIR", popen.call_args.kwargs["env"])
+
     def test_sweep_survives_a_locked_leftover(self):
         updater.backup_path(self.exe).write_bytes(b"locked")
         with mock.patch.object(Path, "unlink", side_effect=OSError("in use")):

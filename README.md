@@ -367,6 +367,10 @@ no admin rights.
   renamed to `word2md-<arch>.exe.old`, the download takes its place, the new
   executable is started and this process exits. The `.old` file is still locked until
   the old process is gone, so it is deleted at the *next* launch by `sweep_leftovers`.
+- The successor is started with `_PYI_APPLICATION_HOME_DIR` and the other bootloader
+  variables **stripped from its environment**. Inheriting them makes the new build run
+  out of the old one's unpacked `_MEIxxxxx` folder, which dies on a half-loaded
+  package (`cannot import name 'ops' from 'pandas._libs'`).
 - Declining the restart keeps the download; the button turns into **"Cài v<version>"**
   so it installs without downloading again.
 - A swap that fails halfway puts the original executable back, and a conversion in
@@ -391,8 +395,8 @@ Pushing a `v*` tag runs the tests, builds both executables and publishes them as
 GitHub Release:
 
 ```powershell
-git tag v1.4.0
-git push origin v1.4.0
+git tag v1.4.1
+git push origin v1.4.1
 ```
 
 The release job waits for both architectures, so a release never ships with one of
