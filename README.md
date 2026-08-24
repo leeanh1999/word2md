@@ -25,6 +25,8 @@ drag-and-drop and batch processing.
   each `H1` and an optional automatic table of contents.
 - **Files attached to a Word document** (PDF, HTML, ZIP…) are written out in their real
   format instead of the `.emf` icon Word shows for them.
+- **Updates itself**: the app checks GitHub Releases at startup, and one click
+  downloads the build for this architecture, swaps it in and restarts (see below).
 - Command-line mode for automation.
 
 ## Section extraction (Navigation Pane)
@@ -230,6 +232,7 @@ word2md/
 │   ├── legacy.py              # .doc/.xls backends + OLE parser
 │   ├── outline.py             # Outline tree + partial extraction
 │   ├── section_dialog.py      # Section picker window
+│   ├── updater.py             # In-app update from GitHub Releases
 │   └── gui.py                 # customtkinter interface
 ├── tests/
 │   ├── make_samples.py        # Generates test.docx / test.xlsx / corrupt.docx
@@ -238,6 +241,7 @@ word2md/
 │   ├── test_attachments.py    # Unit tests for OLE attachments
 │   ├── test_outline.py        # Unit tests for the outline and extraction
 │   ├── test_legacy.py         # Unit tests for .doc/.xls
+│   ├── test_updater.py        # Unit tests for the in-app updater
 │   └── test_gui_smoke.py      # Builds a real window, runs a batch + section picker
 └── output/                    # Default output folder
 ```
@@ -342,14 +346,53 @@ python -m venv .venv
    `windows-11-arm` runner. That runner is **free for public repos only**; private
    repos need real hardware or a larger ARM64 runner.
 
+## Updating in place
+
+The app updates itself from the GitHub Releases of this repository — no installer,
+no admin rights.
+
+- **On startup** it asks the API for the latest release, two seconds after the window
+  is up, on a background thread. Nothing is shown unless there is a newer version; a
+  timeout or an offline machine is swallowed silently.
+- **The "Kiểm tra cập nhật" button** does the same check out loud, and reports being
+  up to date or unreachable.
+- Only the asset built for the running architecture (`word2md-x64.exe` or
+  `word2md-arm64.exe`) is offered, and only when its tag parses as a higher version
+  than `src/__init__.py`'s `__version__`.
+- Accepting downloads it next to the running executable, showing progress on the
+  main progress bar, and verifies it against the `.sha256` asset the release job
+  publishes. A mismatch or a cancelled download deletes the partial file.
+- Then the app **replaces itself and restarts**: Windows will not let a running
+  executable be overwritten, but it does allow renaming one, so the running exe is
+  renamed to `word2md-<arch>.exe.old`, the download takes its place, the new
+  executable is started and this process exits. The `.old` file is still locked until
+  the old process is gone, so it is deleted at the *next* launch by `sweep_leftovers`.
+- Declining the restart keeps the download; the button turns into **"Cài v<version>"**
+  so it installs without downloading again.
+- A swap that fails halfway puts the original executable back, and a conversion in
+  progress blocks the restart.
+
+Running from source (`python main.py`) skips all of this and just points at the
+releases page — `git pull` is the update there.
+
+```
+src/updater.py     check_for_update() -> download() -> apply_update() -> relaunch()
+```
+
+Two situations need a manual download:
+
+- The app lives somewhere the user cannot write, such as `C:\Program Files`. The
+  download fails with a permission message before anything is touched.
+- The release has no build for that architecture yet (the ARM64 job is separate).
+
 ## Releases
 
 Pushing a `v*` tag runs the tests, builds both executables and publishes them as a
 GitHub Release:
 
 ```powershell
-git tag v1.3.1
-git push origin v1.3.1
+git tag v1.4.0
+git push origin v1.4.0
 ```
 
 The release job waits for both architectures, so a release never ships with one of

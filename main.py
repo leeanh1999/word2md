@@ -258,6 +258,11 @@ def _run_sections(source: Path, args, options) -> int:
 
 def main() -> int:
     _configure_stdio()
+
+    from src.updater import sweep_leftovers
+
+    sweep_leftovers()  # clear what the previous self-update left behind
+
     if len(sys.argv) > 1:
         return _run_cli(sys.argv[1:])
 

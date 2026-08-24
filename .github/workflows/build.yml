@@ -72,12 +72,22 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # The in-app updater verifies the download against these before it
+      # replaces the running executable.
+      - name: Checksums
+        run: |
+          cd dist
+          for exe in *.exe; do
+            sha256sum "$exe" > "$exe.sha256"
+          done
+          cat *.sha256
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           ls -l dist
-          gh release create "$GITHUB_REF_NAME" dist/*.exe \
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/*.sha256 \
             --title "word2md $GITHUB_REF_NAME" \
             --generate-notes

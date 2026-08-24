@@ -37,6 +37,16 @@ from .md_to_docx import (
     DocxSettings,
 )
 from .section_dialog import DocumentChooser, SectionDialog
+from .updater import (
+    RELEASES_PAGE,
+    Update,
+    UpdateError,
+    apply_update,
+    check_for_update,
+    current_exe,
+    download,
+    sweep_leftovers,
+)
 
 
 def legacy_support_note() -> str:
@@ -371,10 +381,19 @@ class App:
         self.events: queue.Queue = queue.Queue()
         self.last_output_dir: Path | None = None
 
+        self.update_worker: threading.Thread | None = None
+        self.pending_update: Update | None = None
+        self.staged_update: Path | None = None  # downloaded, install postponed
+
         self._build_ui()
         self._enable_dnd()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(80, self._drain_events)
+
+        # Whatever the last update left behind is free to delete by now.
+        sweep_leftovers()
+        # Let the window paint before touching the network.
+        self.root.after(2000, lambda: self.check_for_updates(silent=True))
 
     # ------------------------------------------------------------------ ui
 
@@ -395,12 +414,20 @@ class App:
             text="Mỗi chiều chuyển đổi một tab, với tuỳ chọn riêng.",
             text_color=("#5c5c5c", "#9a9a9a"),
         ).grid(row=1, column=0, sticky="w", padx=20, pady=(0, 12))
+        self.update_button = ctk.CTkButton(
+            header,
+            text="Kiểm tra cập nhật",
+            width=140,
+            command=self.check_for_updates,
+            **OUTLINE_BUTTON,
+        )
+        self.update_button.grid(row=0, column=1, rowspan=2, padx=(0, 8))
         ctk.CTkOptionMenu(
             header,
             values=["System", "Light", "Dark"],
             width=110,
             command=lambda value: ctk.set_appearance_mode(value.lower()),
-        ).grid(row=0, column=1, rowspan=2, padx=20)
+        ).grid(row=0, column=2, rowspan=2, padx=(0, 20))
 
         self.tabs = ctk.CTkTabview(self.root, command=self._on_tab_changed)
         self.tabs.grid(row=1, column=0, sticky="nsew", padx=16, pady=(8, 0))
@@ -860,6 +887,27 @@ class App:
             self._show_section_dialog(event[1])
             return
 
+        if kind == "update-found":
+            self._on_update_found(event[1], event[2])
+            return
+
+        if kind == "update-progress":
+            _, done, total = event
+            self.progress.set(done / total if total else 0)
+            self.status_label.configure(
+                text=f"Đang tải bản cập nhật… {done / 1_048_576:.1f} MB"
+                + (f" / {total / 1_048_576:.1f} MB" if total else "")
+            )
+            return
+
+        if kind == "update-downloaded":
+            self._on_update_downloaded(event[1])
+            return
+
+        if kind == "update-error":
+            self._on_update_error(event[1], event[2])
+            return
+
         if kind == "outline-error":
             self.sections_button.configure(state="normal")
             self.status_label.configure(text="Không đọc được mục lục.")
@@ -915,6 +963,139 @@ class App:
             messagebox.showwarning("Có file lỗi", f"{summary}\n\n{detail}")
         elif ok:
             messagebox.showinfo("Xong", f"{summary}.\n\nThư mục: {self.last_output_dir}")
+
+    # ----------------------------------------------------------- self-update
+
+    def check_for_updates(self, silent: bool = False) -> None:
+        """Ask GitHub for a newer release, off the UI thread.
+
+        A silent check runs at startup and stays quiet unless there is
+        something to install; the button does the talking version.
+        """
+        if self.update_worker is not None and self.update_worker.is_alive():
+            return
+        # A download the user postponed is still sitting there: install that
+        # instead of fetching the same file again.
+        if self.staged_update is not None and self.staged_update.is_file():
+            self._on_update_downloaded(self.staged_update)
+            return
+        if not silent:
+            self.update_button.configure(state="disabled", text="Đang kiểm tra…")
+            self.status_label.configure(text="Đang kiểm tra bản cập nhật…")
+
+        def worker() -> None:
+            try:
+                update = check_for_update()
+            except Exception as exc:  # noqa: BLE001 - reported, never fatal
+                self.events.put(("update-error", str(exc), silent))
+                return
+            self.events.put(("update-found", update, silent))
+
+        self.update_worker = threading.Thread(target=worker, daemon=True)
+        self.update_worker.start()
+
+    def _reset_update_button(self) -> None:
+        self.update_button.configure(state="normal", text="Kiểm tra cập nhật")
+
+    def _on_update_found(self, update: Update | None, silent: bool) -> None:
+        self._reset_update_button()
+        if update is None:
+            if not silent:
+                self.status_label.configure(
+                    text=f"Đang dùng bản mới nhất (v{__version__})."
+                )
+            return
+
+        self.pending_update = update
+        self.status_label.configure(
+            text=f"Có bản mới v{update.version} ({update.size_text})."
+        )
+
+        if current_exe() is None:
+            messagebox.showinfo(
+                "Có bản cập nhật",
+                f"Đã có v{update.version} (bạn đang dùng v{__version__}).\n\n"
+                "Bản chạy từ mã nguồn không tự cập nhật được — hãy `git pull`, "
+                f"hoặc tải .exe tại:\n{RELEASES_PAGE}",
+            )
+            return
+
+        notes = update.notes.strip()
+        if len(notes) > 600:
+            notes = notes[:600].rstrip() + "…"
+        detail = f"\n\nThay đổi:\n{notes}" if notes else ""
+        if messagebox.askyesno(
+            "Có bản cập nhật",
+            f"Đã có v{update.version} (bạn đang dùng v{__version__}), "
+            f"dung lượng {update.size_text}.{detail}\n\n"
+            "Tải và cài ngay? App sẽ tự khởi động lại.",
+        ):
+            self._start_update_download()
+
+    def _start_update_download(self) -> None:
+        update = self.pending_update
+        if update is None:
+            return
+        if self.is_running():
+            messagebox.showinfo(
+                "Đang chuyển đổi",
+                "Hãy đợi tiến trình hiện tại chạy xong rồi cập nhật.",
+            )
+            return
+
+        self.update_button.configure(state="disabled", text="Đang tải…")
+        self.progress.set(0)
+
+        def worker() -> None:
+            try:
+                path = download(
+                    update,
+                    on_progress=lambda done, total: self.events.put(
+                        ("update-progress", done, total)
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, never fatal
+                self.events.put(("update-error", str(exc), False))
+                return
+            self.events.put(("update-downloaded", path))
+
+        self.update_worker = threading.Thread(target=worker, daemon=True)
+        self.update_worker.start()
+
+    def _on_update_downloaded(self, path: Path) -> None:
+        self._reset_update_button()
+        self.progress.set(1)
+        version = self.pending_update.version if self.pending_update else ""
+
+        if not messagebox.askokcancel(
+            "Cài bản cập nhật",
+            f"Đã tải xong v{version}.\n\n"
+            "App sẽ đóng và mở lại ngay bằng bản mới. "
+            "Nhấn Cancel để cài vào lần sau.",
+        ):
+            self.staged_update = path
+            self.update_button.configure(text=f"Cài v{version}")
+            self.status_label.configure(text=f"Đã tải v{version}, chưa cài.")
+            return
+
+        self.staged_update = None
+        self.status_label.configure(text="Đang cài và khởi động lại…")
+        self.root.update_idletasks()
+        try:
+            apply_update(path)  # replaces this exe and never returns
+        except UpdateError as exc:
+            self.status_label.configure(text="Cài bản cập nhật thất bại.")
+            messagebox.showerror(
+                "Không cài được",
+                f"{exc}\n\nBạn có thể tải thủ công tại:\n{RELEASES_PAGE}",
+            )
+
+    def _on_update_error(self, message: str, silent: bool) -> None:
+        self._reset_update_button()
+        if silent:  # a startup check must never nag about a flaky network
+            return
+        self.status_label.configure(text="Không kiểm tra được bản cập nhật.")
+        messagebox.showwarning("Cập nhật", message)
 
     # -------------------------------------------------------------- lifecycle
 
