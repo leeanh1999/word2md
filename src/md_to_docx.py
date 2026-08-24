@@ -806,27 +806,41 @@ class _Writer:
                 self._write_block(child, level, inner)
 
     def _write_list(self, block: ListBlock, level: int, indent: int) -> None:
-        num_id = self._new_numbering(block.ordered, block.start)
+        num_id = None
         depth = min(level, 8)
         child_indent = indent + _LEVEL_INDENT * (depth + 1)
 
         for item in block.items:
             blocks = item.blocks or [Paragraph("")]
             first, *rest = blocks
-            paragraph = self._paragraph("List Paragraph")
-            self._apply_numbering(paragraph, num_id, depth, indent)
-            if item.checked is not None:
-                paragraph.add_run("☒ " if item.checked else "☐ ")
-            if isinstance(first, Paragraph):
-                self._add_spans(paragraph, parse_inline(first.text))
-            else:
-                self._write_block(first, level + 1, child_indent)
 
+            # A `- - text` item carries no text of its own: Word lists that
+            # start below level one arrive as an outer item wrapping nothing
+            # but a nested list. Bulleting it would leave a stray, empty
+            # bullet above the nested items, so hoist the nested list into
+            # this level instead - the content takes the bullet the empty
+            # item would have had.
+            hoisted = isinstance(first, ListBlock) and item.checked is None
+            if hoisted:
+                rest = blocks
+            else:
+                if num_id is None:
+                    num_id = self._new_numbering(block.ordered, block.start)
+                paragraph = self._paragraph("List Paragraph")
+                self._apply_numbering(paragraph, num_id, depth, indent)
+                if item.checked is not None:
+                    paragraph.add_run("☒ " if item.checked else "☐ ")
+                if isinstance(first, Paragraph):
+                    self._add_spans(paragraph, parse_inline(first.text))
+                else:
+                    self._write_block(first, level + 1, child_indent)
+
+            inner_level = level if hoisted else level + 1
             for child in rest:
                 if isinstance(child, ListBlock):
-                    self._write_list(child, level + 1, indent)
+                    self._write_list(child, inner_level, indent)
                 else:
-                    self._write_block(child, level + 1, child_indent)
+                    self._write_block(child, inner_level, child_indent)
 
     def _write_table(self, block: Table) -> None:
         width = len(block.header)

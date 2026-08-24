@@ -348,8 +348,8 @@ Pushing a `v*` tag runs the tests, builds both executables and publishes them as
 GitHub Release:
 
 ```powershell
-git tag v1.3.0
-git push origin v1.3.0
+git tag v1.3.1
+git push origin v1.3.1
 ```
 
 The release job waits for both architectures, so a release never ships with one of

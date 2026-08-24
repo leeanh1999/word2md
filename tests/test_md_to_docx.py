@@ -237,6 +237,39 @@ class RoundTripTests(unittest.TestCase):
         ):
             self.assertIn(expected, text)
 
+    def bullets_of(self, markdown: str, name: str) -> list[tuple[str, str]]:
+        """Every list paragraph of the .docx as (text, numbering level)."""
+        from docx import Document
+        from docx.oxml.ns import qn
+
+        destination = self.root / f"{name}.docx"
+        markdown_text_to_docx(markdown, destination)
+        return [
+            (
+                paragraph.text,
+                paragraph._p.pPr.find(qn("w:numPr"))
+                .find(qn("w:ilvl"))
+                .get(qn("w:val")),
+            )
+            for paragraph in Document(destination).paragraphs
+            if paragraph.style.name == "List Paragraph"
+        ]
+
+    def test_bare_nested_item_is_hoisted_a_level(self):
+        """`- - text` is one bullet at the outer level, not an empty one
+        above a nested one.
+
+        Word lists that start below level one arrive as an outer item holding
+        nothing but a nested list; its content takes the bullet the empty item
+        would have had.
+        """
+        bullets = self.bullets_of("- - đầu\n  - cuối\n\n- riêng\n", "bare_nested")
+        self.assertEqual(bullets, [("đầu", "0"), ("cuối", "0"), ("riêng", "0")])
+
+    def test_hoisting_keeps_relative_nesting(self):
+        bullets = self.bullets_of("- - đầu\n    - sâu\n", "bare_nested_deep")
+        self.assertEqual(bullets, [("đầu", "0"), ("sâu", "1")])
+
     def test_table_survives(self):
         text = self.round_trip(
             "| Tên | Số |\n| --- | --- |\n| a | 1 |\n| b | 2 |\n", "table"
