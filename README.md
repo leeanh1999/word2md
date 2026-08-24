@@ -219,6 +219,7 @@ Two details worth knowing:
 ```
 word2md/
 ├── main.py                    # Entry point: no args -> GUI, args -> CLI
+├── CHANGELOG.md               # Every released version, newest first
 ├── build.py                   # PyInstaller packaging script (x64 / ARM64)
 ├── build.bat / run.bat        # Windows helpers
 ├── .github/workflows/build.yml # CI: builds both x64 and ARM64
@@ -392,7 +393,8 @@ Two situations need a manual download:
 ## Releases
 
 Pushing a `v*` tag runs the tests, builds both executables and publishes them as a
-GitHub Release:
+GitHub Release, with the tag's own section of `CHANGELOG.md` as the release notes
+(a version missing from the changelog falls back to generated notes and warns):
 
 ```powershell
 git tag v1.4.1
@@ -400,7 +402,8 @@ git push origin v1.4.1
 ```
 
 The release job waits for both architectures, so a release never ships with one of
-them missing.
+them missing. Add the section to `CHANGELOG.md` before tagging — the in-app updater
+shows those notes in the "có bản mới" prompt.
 
 Every dependency ships a `win_arm64` wheel for CPython 3.13, including `pywin32` (so
 `.doc`/`.xls` over COM still work) and `tkinterdnd2` (which bundles `tkdnd/win-arm64`,

@@ -66,6 +66,8 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v7  # for CHANGELOG.md
+
       - uses: actions/download-artifact@v7
         with:
           pattern: word2md-*
@@ -82,12 +84,32 @@ jobs:
           done
           cat *.sha256
 
+      # The release notes are the tag's own section of CHANGELOG.md, so what a
+      # release says is written and reviewed with the code it ships.
+      - name: Release notes
+        run: |
+          awk -v heading="## [${GITHUB_REF_NAME#v}]" '
+            index($0, heading) == 1 { inside = 1; next }
+            inside && index($0, "## [") == 1 { exit }
+            inside { print }
+          ' CHANGELOG.md > notes.md
+          if [ -s notes.md ]; then
+            cat notes.md
+          else
+            echo "::warning::CHANGELOG.md has no section for $GITHUB_REF_NAME"
+          fi
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           ls -l dist
+          if [ -s notes.md ]; then
+            notes=(--notes-file notes.md)
+          else
+            notes=(--generate-notes)
+          fi
           gh release create "$GITHUB_REF_NAME" dist/*.exe dist/*.sha256 \
             --title "word2md $GITHUB_REF_NAME" \
-            --generate-notes
+            "${notes[@]}"
