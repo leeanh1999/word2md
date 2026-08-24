@@ -7,10 +7,23 @@ Every released version of word2md, newest first. The format follows
 Pushing a `v*` tag builds both executables and publishes them as a GitHub Release,
 using the section below that matches the tag as the release notes.
 
+Only the newest release keeps its executables on GitHub. Older ones are removed:
+none of them can update itself, so downloading one is a dead end.
+
+## [1.4.2] - 2026-08-24
+
+### Changed
+
+- The update prompt shows the release notes as plain text. They come from this
+  changelog, so the dialog used to display `###`, `**` and link syntax literally;
+  headings, bullets, emphasis and links are now rendered for a message box, and
+  the text is cut on a word boundary rather than mid-word.
+- Release notes are published from this file instead of from generated commit
+  subjects.
+
 ## [1.4.1] - 2026-08-24
 
-The app updates itself now. Only this release is kept on GitHub; earlier
-executables were removed because none of them can update themselves.
+The app updates itself now.
 
 ### Added
 
@@ -153,7 +166,8 @@ executables were removed because none of them can update themselves.
 Older versions have no release to download any more, so each one links to the tag
 it was built from. 1.0.0 predates tagging and links to its commit.
 
-[1.4.1]: https://github.com/leeanh1999/word2md/releases/tag/v1.4.1
+[1.4.2]: https://github.com/leeanh1999/word2md/releases/tag/v1.4.2
+[1.4.1]: https://github.com/leeanh1999/word2md/tree/v1.4.1
 [1.3.1]: https://github.com/leeanh1999/word2md/tree/v1.3.1
 [1.3.0]: https://github.com/leeanh1999/word2md/tree/v1.3.0
 [1.2.0]: https://github.com/leeanh1999/word2md/tree/v1.2.0

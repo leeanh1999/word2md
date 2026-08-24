@@ -82,6 +82,41 @@ class SelectUpdateTests(unittest.TestCase):
                 )
 
 
+class PlainNotesTests(unittest.TestCase):
+    NOTES = (
+        "## [1.4.1] - 2026-08-24\n"
+        "\n"
+        "### Added\n"
+        "\n"
+        "- **In-app update.** See `sweep_leftovers` and the\n"
+        "  [changelog](https://example/CHANGELOG.md).\n"
+        "- *Nothing* else.\n"
+    )
+
+    def test_markup_is_stripped(self):
+        text = updater.plain_notes(self.NOTES)
+        for marker in ("###", "**", "`"):
+            self.assertNotIn(marker, text)
+        self.assertIn("Added:", text)
+        self.assertIn("• In-app update. See sweep_leftovers", text)
+        self.assertIn("changelog (https://example/CHANGELOG.md)", text)
+        self.assertIn("• Nothing else.", text)
+
+    def test_snake_case_survives_the_italics_rule(self):
+        self.assertEqual(updater.plain_notes("sweep_leftovers and a_b_c"),
+                         "sweep_leftovers and a_b_c")
+
+    def test_long_notes_are_cut_on_a_word_boundary(self):
+        text = updater.plain_notes("word " * 400, limit=100)
+        self.assertLessEqual(len(text), 101)
+        self.assertTrue(text.endswith("…"))
+        self.assertNotIn("wor…", text)
+
+    def test_empty_notes(self):
+        self.assertEqual(updater.plain_notes(""), "")
+        self.assertEqual(updater.plain_notes(None), "")
+
+
 class _FakeResponse(io.BytesIO):
     def __init__(self, data: bytes, headers: dict | None = None):
         super().__init__(data)

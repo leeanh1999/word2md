@@ -397,8 +397,8 @@ GitHub Release, with the tag's own section of `CHANGELOG.md` as the release note
 (a version missing from the changelog falls back to generated notes and warns):
 
 ```powershell
-git tag v1.4.1
-git push origin v1.4.1
+git tag v1.4.2
+git push origin v1.4.2
 ```
 
 The release job waits for both architectures, so a release never ships with one of

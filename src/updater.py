@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -123,6 +124,35 @@ def select_update(
         notes=(payload.get("body") or "").strip(),
         checksum_url=checksum["browser_download_url"] if checksum else None,
     )
+
+
+def plain_notes(notes: str, limit: int = 700) -> str:
+    """Release notes as plain text, because a message box has no Markdown.
+
+    The notes come from CHANGELOG.md, so they arrive full of `###`, `**` and
+    link syntax that a dialog would show literally.
+    """
+    lines: list[str] = []
+    for raw in (notes or "").splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            line = line.lstrip("#").strip() + ":"
+        elif line.startswith(("- ", "* ")):
+            line = "• " + line[2:]
+        if line or (lines and lines[-1]):
+            lines.append(line)
+
+    # Inline markup is cleaned on the joined text, because a wrapped **bold**
+    # phrase has its opening and closing markers on different lines.
+    text = "\n".join(lines).strip()
+    text = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", r"\1 (\2)", text)  # links
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text, flags=re.S)  # bold
+    text = re.sub(r"(?<!\w)\*(.+?)\*(?!\w)", r"\1", text, flags=re.S)  # italics
+    text = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", text)  # italics, underscored
+    text = text.replace("`", "")
+    if len(text) > limit:
+        text = text[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:-") + "…"
+    return text
 
 
 def _request(url: str) -> urllib.request.Request:

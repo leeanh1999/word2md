@@ -45,6 +45,7 @@ from .updater import (
     check_for_update,
     current_exe,
     download,
+    plain_notes,
     sweep_leftovers,
 )
 
@@ -1020,9 +1021,7 @@ class App:
             )
             return
 
-        notes = update.notes.strip()
-        if len(notes) > 600:
-            notes = notes[:600].rstrip() + "…"
+        notes = plain_notes(update.notes)
         detail = f"\n\nThay đổi:\n{notes}" if notes else ""
         if messagebox.askyesno(
             "Có bản cập nhật",
