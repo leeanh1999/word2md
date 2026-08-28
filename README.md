@@ -463,6 +463,11 @@ python -m venv .venv
    `windows-11-arm` runner. That runner is **free for public repos only**; private
    repos need real hardware or a larger ARM64 runner.
 
+Two dependencies are pinned per architecture in `requirements.txt`, because the ARM64
+runner has no C/Rust toolchain and can only install what ships a `win_arm64` wheel:
+`pandas` (>=3.0.5 on ARM64) and `cryptography` (==46.0.3, the last version with such a
+wheel; `pdfminer.six` requires it for encrypted PDFs).
+
 ## Updating in place
 
 The app updates itself from the GitHub Releases of this repository — no installer,

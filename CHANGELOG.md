@@ -65,7 +65,9 @@ directions, and Markdown can come out as a workbook as well as a document.
   included (its fields are updated before the export). Without Word or LibreOffice the
   conversion fails with a message saying what to install.
 - New dependencies for the reading side: `pdfplumber==0.11.10` and `pypdf==6.16.2`.
-  Writing a PDF needs no new package - that is Word's or LibreOffice's job.
+  Writing a PDF needs no new package - that is Word's or LibreOffice's job. `pdfminer.six`
+  pulls in `cryptography`, which is pinned to 46.0.3 on ARM64: that is the last version
+  publishing a `win_arm64` wheel, and the ARM64 runner cannot build it from source.
 
 ### Changed
 

@@ -10,6 +10,13 @@ pillow==12.3.0
 # LibreOffice's job, so nothing here is needed for that direction.
 pdfplumber==0.11.10
 pypdf==6.16.2
+
+# pdfminer.six needs cryptography for AES-encrypted PDFs, and only 46.x
+# publishes win_arm64 wheels. The ARM64 runner has no Rust/OpenSSL toolchain to
+# build it from source, so that platform is pinned to the last version that
+# ships a wheel.
+cryptography>=46.0.3; platform_machine != "ARM64"
+cryptography==46.0.3; platform_machine == "ARM64"
 python-docx==1.2.0
 tabulate==0.9.0
 tkinterdnd2==0.4.3
