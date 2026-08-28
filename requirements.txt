@@ -1,6 +1,15 @@
 customtkinter==5.2.2
 mammoth==1.11.0
 openpyxl==3.1.5
+# openpyxl reads an image through Pillow; without it a picture
+# cannot be embedded in a workbook and only its path is kept.
+pillow==12.3.0
+
+# PDF: pdfplumber (on pdfminer.six) reads the text and the tables out of a
+# page, pypdf pulls the embedded images. Writing a PDF is Word's or
+# LibreOffice's job, so nothing here is needed for that direction.
+pdfplumber==0.11.10
+pypdf==6.16.2
 python-docx==1.2.0
 tabulate==0.9.0
 tkinterdnd2==0.4.3

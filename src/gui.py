@@ -16,6 +16,7 @@ from . import __app_name__, __version__
 from .converter import (
     EXCEL_EXTENSIONS,
     MARKDOWN_EXTENSIONS,
+    PDF_EXTENSIONS,
     STATUS_CANCELLED,
     STATUS_ERROR,
     STATUS_SKIPPED,
@@ -27,7 +28,11 @@ from .converter import (
     convert_docx_sections,
     convert_many,
     load_outline,
+    output_suffix,
+    section_stems,
 )
+from .md_to_xlsx import XlsxSettings
+from .pdf import pdf_support_note
 from .legacy import can_read_xls, find_soffice, has_msoffice
 from .md_to_docx import (
     DEFAULT_FONT,
@@ -110,12 +115,13 @@ STATUS_STYLE = {
     "pending": ("CHỜ", "#7a7a7a"),
 }
 
-OFFICE_EXTENSIONS = WORD_EXTENSIONS | EXCEL_EXTENSIONS
+OFFICE_EXTENSIONS = WORD_EXTENSIONS | EXCEL_EXTENSIONS | PDF_EXTENSIONS
 
 OFFICE_FILE_TYPES = [
-    ("Word & Excel", "*.docx *.doc *.xlsx *.xlsm *.xls"),
+    ("Word, Excel & PDF", "*.docx *.doc *.xlsx *.xlsm *.xls *.pdf"),
     ("Word", "*.docx *.doc"),
     ("Excel", "*.xlsx *.xlsm *.xls"),
+    ("PDF", "*.pdf"),
     ("Tất cả", "*.*"),
 ]
 MARKDOWN_FILE_TYPES = [
@@ -123,8 +129,16 @@ MARKDOWN_FILE_TYPES = [
     ("Tất cả", "*.*"),
 ]
 
-TAB_TO_MARKDOWN = "Word / Excel  →  Markdown"
-TAB_TO_WORD = "Markdown  →  Word"
+TAB_TO_MARKDOWN = "Word / Excel / PDF  →  Markdown"
+TAB_TO_WORD = "Markdown  →  Word / Excel / PDF"
+
+# What the Markdown tab can write, and the extension each choice produces.
+MARKDOWN_TARGET_LABELS = {
+    "Word (.docx)": ".docx",
+    "Excel (.xlsx)": ".xlsx",
+    "PDF (.pdf)": ".pdf",
+}
+DEFAULT_MARKDOWN_TARGET = "Word (.docx)"
 
 FONT_SIZES = ["10", "11", "12", "13", "14", "16", "18"]
 LINE_SPACINGS = ["1.0", "1.15", "1.5", "2.0"]
@@ -162,7 +176,9 @@ def _make_root() -> ctk.CTk:
 class FileRow(ctk.CTkFrame):
     """One line in the queue list: name, path and live status badge."""
 
-    def __init__(self, master, path: Path, on_remove, on_sections=None):
+    def __init__(
+        self, master, path: Path, on_remove, on_sections=None, on_convert=None
+    ):
         super().__init__(master, fg_color="transparent")
         self.path = path
         self.grid_columnconfigure(1, weight=1)
@@ -194,8 +210,22 @@ class FileRow(ctk.CTkFrame):
         )
         self.detail.grid(row=1, column=1, sticky="ew")
 
+        # Every row converts on its own, so a single file needs no batch run.
+        self.convert_button: ctk.CTkButton | None = None
+        if on_convert is not None:
+            self.convert_button = ctk.CTkButton(
+                self,
+                text="Chuyển",
+                width=72,
+                height=26,
+                font=ctk.CTkFont(size=11),
+                command=lambda: on_convert(self.path),
+            )
+            self.convert_button.grid(row=0, column=2, rowspan=2, padx=(6, 0))
+
+        self.sections_button: ctk.CTkButton | None = None
         if on_sections is not None and path.suffix.lower() in WORD_EXTENSIONS:
-            ctk.CTkButton(
+            self.sections_button = ctk.CTkButton(
                 self,
                 text="Mục…",
                 width=58,
@@ -203,7 +233,8 @@ class FileRow(ctk.CTkFrame):
                 font=ctk.CTkFont(size=11),
                 command=lambda: on_sections(self.path),
                 **OUTLINE_BUTTON,
-            ).grid(row=0, column=2, rowspan=2, padx=(6, 0))
+            )
+            self.sections_button.grid(row=0, column=3, rowspan=2, padx=(6, 0))
 
         self.remove_button = ctk.CTkButton(
             self,
@@ -214,7 +245,7 @@ class FileRow(ctk.CTkFrame):
             text_color=("#5c5c5c", "#9a9a9a"),
             command=lambda: on_remove(self.path),
         )
-        self.remove_button.grid(row=0, column=3, rowspan=2, padx=(6, 6))
+        self.remove_button.grid(row=0, column=4, rowspan=2, padx=(6, 6))
 
     def set_status(self, status: str, detail: str) -> None:
         label, color = STATUS_STYLE.get(status, STATUS_STYLE["pending"])
@@ -224,6 +255,13 @@ class FileRow(ctk.CTkFrame):
     def set_busy(self) -> None:
         self.badge.configure(text="...", fg_color="#3b8ed0")
         self.detail.configure(text="Đang xử lý…")
+
+    def set_running(self, running: bool) -> None:
+        """Grey out the per-row actions while any conversion is in flight."""
+        state = "disabled" if running else "normal"
+        for button in (self.convert_button, self.sections_button, self.remove_button):
+            if button is not None:
+                button.configure(state=state)
 
 
 class FileQueue(ctk.CTkFrame):
@@ -308,7 +346,9 @@ class FileQueue(ctk.CTkFrame):
             if path in self.rows or not self.accepts(path):
                 continue
             self.files.append(path)
-            row = FileRow(self.list_frame, path, self.remove, self.on_sections)
+            row = FileRow(
+                self.list_frame, path, self.remove, self.on_sections, self.convert_one
+            )
             row.grid(row=len(self.rows), column=0, sticky="ew", pady=2)
             self.rows[path] = row
             added += 1
@@ -337,9 +377,20 @@ class FileQueue(ctk.CTkFrame):
         self.refresh()
         self.app.status_label.configure(text="Đã xoá danh sách.")
 
-    def mark_pending(self) -> None:
+    def convert_one(self, path: Path) -> None:
+        """Convert just this row, with the tab's own options."""
+        self.app.start_conversion(files=[path], pane=self)
+
+    def mark_pending(self, files=None) -> None:
+        paths = list(self.rows) if files is None else files
+        for path in paths:
+            row = self.rows.get(path)
+            if row is not None:
+                row.set_status("pending", str(row.path.parent))
+
+    def set_running(self, running: bool) -> None:
         for row in self.rows.values():
-            row.set_status("pending", str(row.path.parent))
+            row.set_running(running)
 
     def refresh(self) -> None:
         self.count_label.configure(text=f"{len(self.files)} file")
@@ -367,7 +418,8 @@ class App:
         self.extract_attachments = ctk.BooleanVar(value=True)
         self.add_title = ctk.BooleanVar(value=True)
 
-        # Markdown -> Word
+        # Markdown -> Word / Excel
+        self.markdown_target = ctk.StringVar(value=DEFAULT_MARKDOWN_TARGET)
         self.embed_images = ctk.BooleanVar(value=True)
         self.docx_add_title = ctk.BooleanVar(value=True)
         self.page_break_h1 = ctk.BooleanVar(value=False)
@@ -378,6 +430,7 @@ class App:
         self.line_spacing = ctk.StringVar(value=f"{DEFAULT_LINE_SPACING:g}")
 
         self.worker: threading.Thread | None = None
+        self.quiet_report = False  # single-file runs skip the success dialog
         self.cancel_event = threading.Event()
         self.events: queue.Queue = queue.Queue()
         self.last_output_dir: Path | None = None
@@ -407,7 +460,7 @@ class App:
         header.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             header,
-            text="Word / Excel  ⇄  Markdown",
+            text="Word / Excel / PDF  ⇄  Markdown",
             font=ctk.CTkFont(size=22, weight="bold"),
         ).grid(row=0, column=0, sticky="w", padx=20, pady=(14, 0))
         ctk.CTkLabel(
@@ -458,7 +511,7 @@ class App:
             OFFICE_EXTENSIONS,
             OFFICE_FILE_TYPES,
             self._drop_hint(", ".join(sorted(OFFICE_EXTENSIONS)))
-            + f"\n{legacy_support_note()}",
+            + f"\n{legacy_support_note()}\n{pdf_support_note()}",
             on_sections=self.open_section_extractor,
         )
         pane.grid(row=0, column=0, sticky="nsew")
@@ -492,34 +545,61 @@ class App:
             MARKDOWN_EXTENSIONS,
             MARKDOWN_FILE_TYPES,
             self._drop_hint(", ".join(sorted(MARKDOWN_EXTENSIONS)))
-            + "\nẢnh và file đính kèm được nhúng lại theo đường dẫn tương đối.",
+            + "\nXuất ra Word (.docx), Excel (.xlsx) hoặc PDF (.pdf) - chọn ở dưới.",
         )
         pane.grid(row=0, column=0, sticky="nsew")
+
+        target = ctk.CTkFrame(pane.options, fg_color="transparent")
+        target.pack(fill="x", padx=12, pady=(10, 0))
+        ctk.CTkLabel(target, text="Định dạng xuất:").pack(side="left")
+        ctk.CTkOptionMenu(
+            target,
+            values=list(MARKDOWN_TARGET_LABELS),
+            variable=self.markdown_target,
+            width=150,
+            command=lambda _value: self._on_markdown_target_changed(),
+        ).pack(side="left", padx=(8, 12))
+        self.target_note = ctk.CTkLabel(
+            target,
+            text="",
+            anchor="w",
+            text_color=("#5c5c5c", "#9a9a9a"),
+            font=ctk.CTkFont(size=11),
+        )
+        self.target_note.pack(side="left", fill="x", expand=True)
 
         layout = ctk.CTkFrame(pane.options, fg_color="transparent")
         layout.pack(fill="x", padx=12, pady=(10, 4))
         for column in (1, 3, 5, 7):
             layout.grid_columnconfigure(column, weight=1)
 
-        ctk.CTkLabel(layout, text="Font:").grid(row=0, column=0, sticky="w")
-        ctk.CTkComboBox(
+        font_label = ctk.CTkLabel(layout, text="Font:")
+        font_label.grid(row=0, column=0, sticky="w")
+        font_box = ctk.CTkComboBox(
             layout, values=available_fonts(), variable=self.font_name, width=190
-        ).grid(row=0, column=1, sticky="ew", padx=(6, 16))
+        )
+        font_box.grid(row=0, column=1, sticky="ew", padx=(6, 16))
 
-        ctk.CTkLabel(layout, text="Cỡ chữ:").grid(row=0, column=2, sticky="w")
-        ctk.CTkComboBox(
+        size_label = ctk.CTkLabel(layout, text="Cỡ chữ:")
+        size_label.grid(row=0, column=2, sticky="w")
+        size_box = ctk.CTkComboBox(
             layout, values=FONT_SIZES, variable=self.font_size, width=80
-        ).grid(row=0, column=3, sticky="ew", padx=(6, 16))
+        )
+        size_box.grid(row=0, column=3, sticky="ew", padx=(6, 16))
 
-        ctk.CTkLabel(layout, text="Khổ giấy:").grid(row=0, column=4, sticky="w")
-        ctk.CTkOptionMenu(
+        page_label = ctk.CTkLabel(layout, text="Khổ giấy:")
+        page_label.grid(row=0, column=4, sticky="w")
+        page_box = ctk.CTkOptionMenu(
             layout, values=sorted(PAGE_SIZES), variable=self.page_size, width=100
-        ).grid(row=0, column=5, sticky="ew", padx=(6, 16))
+        )
+        page_box.grid(row=0, column=5, sticky="ew", padx=(6, 16))
 
-        ctk.CTkLabel(layout, text="Giãn dòng:").grid(row=0, column=6, sticky="w")
-        ctk.CTkOptionMenu(
+        spacing_label = ctk.CTkLabel(layout, text="Giãn dòng:")
+        spacing_label.grid(row=0, column=6, sticky="w")
+        spacing_box = ctk.CTkOptionMenu(
             layout, values=LINE_SPACINGS, variable=self.line_spacing, width=90
-        ).grid(row=0, column=7, sticky="ew", padx=(6, 0))
+        )
+        spacing_box.grid(row=0, column=7, sticky="ew", padx=(6, 0))
 
         checks = ctk.CTkFrame(pane.options, fg_color="transparent")
         checks.pack(fill="x", padx=12, pady=(0, 10))
@@ -529,12 +609,26 @@ class App:
         ctk.CTkCheckBox(
             checks, text="Thêm tiêu đề từ tên file", variable=self.docx_add_title
         ).pack(side="left", padx=(0, 18))
-        ctk.CTkCheckBox(
+        page_break = ctk.CTkCheckBox(
             checks, text="Ngắt trang trước tiêu đề cấp 1", variable=self.page_break_h1
-        ).pack(side="left", padx=(0, 18))
-        ctk.CTkCheckBox(
+        )
+        page_break.pack(side="left", padx=(0, 18))
+        toc = ctk.CTkCheckBox(
             checks, text="Chèn mục lục", variable=self.table_of_contents
-        ).pack(side="left")
+        )
+        toc.pack(side="left")
+
+        # What is left shapes a page, which a workbook does not have. Font and
+        # size carry over to Excel, so those two stay enabled.
+        self.docx_only_widgets = [
+            page_label,
+            page_box,
+            spacing_label,
+            spacing_box,
+            page_break,
+            toc,
+        ]
+        self._on_markdown_target_changed()
         return pane
 
     def _build_footer(self) -> None:
@@ -674,6 +768,31 @@ class App:
 
     # ------------------------------------------------------------- options
 
+    def markdown_suffix(self) -> str:
+        """The extension the Markdown tab is set to write."""
+        return MARKDOWN_TARGET_LABELS.get(self.markdown_target.get(), ".docx")
+
+    # What each output format does with the options underneath the picker.
+    _TARGET_NOTES = {
+        ".docx": "Tuỳ chọn Word bên dưới áp dụng cho .docx.",
+        ".xlsx": "Mỗi mục cấp cao nhất thành một sheet; font và cỡ chữ vẫn áp dụng.",
+        ".pdf": "PDF được in ra từ tài liệu Word, nên mọi tuỳ chọn đều áp dụng.",
+    }
+
+    def _on_markdown_target_changed(self) -> None:
+        """Grey out the page options when the target is a workbook."""
+        suffix = self.markdown_suffix()
+        excel = suffix == ".xlsx"
+        for widget in getattr(self, "docx_only_widgets", []):
+            widget.configure(state="disabled" if excel else "normal")
+        self.target_note.configure(text=self._TARGET_NOTES.get(suffix, ""))
+
+    def _xlsx_settings(self) -> XlsxSettings:
+        return XlsxSettings(
+            font=self.font_name.get(),
+            font_size=_to_float(self.font_size.get(), DEFAULT_FONT_SIZE),
+        )
+
     def _docx_settings(self) -> DocxSettings:
         return DocxSettings(
             font=self.font_name.get(),
@@ -684,18 +803,24 @@ class App:
             table_of_contents=self.table_of_contents.get(),
         )
 
-    def options_for(self, pane: FileQueue) -> ConversionOptions:
+    def options_for(
+        self, pane: FileQueue, overwrite: bool | None = None
+    ) -> ConversionOptions:
+        if overwrite is None:
+            overwrite = self.overwrite.get()
         if pane is self.queues[TAB_TO_WORD]:
             return ConversionOptions(
                 extract_images=self.embed_images.get(),
-                overwrite=self.overwrite.get(),
+                overwrite=overwrite,
                 add_title_heading=self.docx_add_title.get(),
+                markdown_target=self.markdown_suffix(),
                 docx=self._docx_settings(),
+                xlsx=self._xlsx_settings(),
             )
         return ConversionOptions(
             extract_images=self.extract_images.get(),
             extract_attachments=self.extract_attachments.get(),
-            overwrite=self.overwrite.get(),
+            overwrite=overwrite,
             add_title_heading=self.add_title.get(),
         )
 
@@ -764,10 +889,18 @@ class App:
         if output_dir is None:
             return
 
+        stems = section_stems(
+            outline.roots, choice["node_ids"], choice["source"], choice["split"]
+        )
+        overwrite = self._resolve_clash(output_dir / f"{stem}.md" for stem in stems)
+        if overwrite is None:
+            self.status_label.configure(text="Đã huỷ trích xuất theo mục.")
+            return
+
         options = ConversionOptions(
             extract_images=self.extract_images.get(),
             extract_attachments=self.extract_attachments.get(),
-            overwrite=self.overwrite.get(),
+            overwrite=overwrite,
             add_title_heading=self.add_title.get(),
             promote_headings=choice["promote"],
             split_sections=choice["split"],
@@ -796,14 +929,43 @@ class App:
         self.last_output_dir = output_dir
         return output_dir
 
-    def start_conversion(self) -> None:
+    def _resolve_clash(self, targets) -> bool | None:
+        """Decide what to do about output files that already exist.
+
+        Returns the `overwrite` flag to run with - True to replace the old
+        file, False to write alongside it under a new name - or None when the
+        user backs out. With "Ghi đè file trùng tên" ticked nothing is asked.
+        """
+        if self.overwrite.get():
+            return True
+        clashing = sorted({target.name for target in targets if target.exists()})
+        if not clashing:
+            return False
+
+        listing = "\n".join(f"• {name}" for name in clashing[:8])
+        if len(clashing) > 8:
+            listing += f"\n… và {len(clashing) - 8} file khác."
+        return messagebox.askyesnocancel(
+            "File đã tồn tại",
+            f"Thư mục lưu đã có:\n{listing}\n\n"
+            "Yes — ghi đè file cũ.\n"
+            "No — tạo file tên mới, ví dụ “tên (1).md”.\n"
+            "Cancel — không chuyển đổi.",
+            icon=messagebox.WARNING,
+        )
+
+    def start_conversion(
+        self, files: list[Path] | None = None, pane: "FileQueue | None" = None
+    ) -> None:
+        """Convert `files` (default: every file in the open tab), or cancel."""
         if self.is_running():
             self.cancel_event.set()
             self.status_label.configure(text="Đang huỷ…")
             return
 
-        pane = self.current
-        if not pane.files:
+        pane = pane or self.current
+        files = list(files) if files is not None else list(pane.files)
+        if not files:
             messagebox.showinfo(
                 "Chưa có file", "Hãy thêm ít nhất một file vào tab đang mở."
             )
@@ -813,18 +975,37 @@ class App:
         if output_dir is None:
             return
 
-        options = self.options_for(pane)
-        pane.mark_pending()
+        suffix = self.markdown_suffix()
+        overwrite = self._resolve_clash(
+            output_dir / f"{path.stem}{output_suffix(path, suffix)}" for path in files
+        )
+        if overwrite is None:
+            self.status_label.configure(text="Đã huỷ chuyển đổi.")
+            return
+
+        options = self.options_for(pane, overwrite=overwrite)
+        pane.mark_pending(files)
         self.progress.set(0)
         self.cancel_event.clear()
         self.convert_button.configure(text="Huỷ", fg_color="#b04545", hover_color="#8f3737")
-        self.status_label.configure(text="Bắt đầu chuyển đổi…")
+        self._lock_rows(True)
+        # A one-file run reports in the status bar; a batch earns a dialog.
+        self.quiet_report = len(files) == 1
+        self.status_label.configure(
+            text=f"Đang chuyển {files[0].name}…"
+            if self.quiet_report
+            else "Bắt đầu chuyển đổi…"
+        )
 
-        files = list(pane.files)
         self.worker = threading.Thread(
             target=self._run_batch, args=(files, output_dir, options), daemon=True
         )
         self.worker.start()
+
+    def _lock_rows(self, running: bool) -> None:
+        """Freeze the per-row buttons while a conversion is in flight."""
+        for pane in self.queues.values():
+            pane.set_running(running)
 
     def _run_batch(self, files, output_dir: Path, options: ConversionOptions) -> None:
         def on_progress(index: int, total: int, result: ConversionResult) -> None:
@@ -937,6 +1118,7 @@ class App:
 
     def _finish(self) -> None:
         self.worker = None
+        self._lock_rows(False)
         self.convert_button.configure(
             text="Chuyển đổi",
             fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"],
@@ -950,6 +1132,7 @@ class App:
         skipped = sum(1 for r in results if r.status == STATUS_SKIPPED)
 
         self.progress.set(1 if not cancelled else self.progress.get())
+        quiet, self.quiet_report = self.quiet_report, False
         summary = f"Hoàn tất: {ok} thành công, {len(failed)} lỗi"
         if skipped:
             summary += f", {skipped} bỏ qua"
@@ -962,7 +1145,7 @@ class App:
             if len(failed) > 10:
                 detail += f"\n… và {len(failed) - 10} file khác."
             messagebox.showwarning("Có file lỗi", f"{summary}\n\n{detail}")
-        elif ok:
+        elif ok and not quiet:
             messagebox.showinfo("Xong", f"{summary}.\n\nThư mục: {self.last_output_dir}")
 
     # ----------------------------------------------------------- self-update

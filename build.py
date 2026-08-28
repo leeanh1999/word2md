@@ -18,6 +18,8 @@ Equivalent raw command on Windows:
     pyinstaller --noconfirm --clean --onefile --noconsole --name word2md-x64 \
         --collect-data customtkinter --collect-all tkinterdnd2 \
         --hidden-import tabulate --hidden-import openpyxl \
+        --hidden-import PIL.Image --hidden-import pdfplumber \
+        --hidden-import pypdf --collect-data pdfminer \
         main.py
 """
 
@@ -210,6 +212,17 @@ def build(
         "openpyxl",
         "--hidden-import",
         "openpyxl.cell._writer",
+        # openpyxl reaches for Pillow only when a picture is embedded.
+        "--hidden-import",
+        "PIL.Image",
+        # PDF reading: pdfplumber is imported on first use, and pdfminer.six
+        # keeps its CMap tables as package data.
+        "--hidden-import",
+        "pdfplumber",
+        "--hidden-import",
+        "pypdf",
+        "--collect-data",
+        "pdfminer",
         "--hidden-import",
         "xlrd",
         # .doc / .xls support: OLE parsing plus Office automation.

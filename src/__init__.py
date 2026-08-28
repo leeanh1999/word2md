@@ -1,4 +1,4 @@
-"""word2md - convert Word and Excel documents to Markdown, and back."""
+"""word2md - convert Word, Excel and PDF documents to Markdown, and back."""
 
-__version__ = "1.4.2"
-__app_name__ = "Word/Excel ⇄ Markdown"
+__version__ = "1.5.0"
+__app_name__ = "Word/Excel/PDF ⇄ Markdown"

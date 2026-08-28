@@ -31,6 +31,8 @@ from .legacy import (
     sniff,
 )
 from .md_to_docx import MARKDOWN_EXTENSIONS, DocxSettings, markdown_to_docx
+from .md_to_xlsx import XlsxSettings, markdown_to_xlsx
+from .pdf import PDF_EXTENSIONS, pdf_to_markdown
 from .outline import (
     OutlineNode,
     build_outline,
@@ -43,7 +45,11 @@ from .outline import (
 
 WORD_EXTENSIONS = {".docx", ".doc"}
 EXCEL_EXTENSIONS = {".xlsx", ".xlsm", ".xls"}
-SUPPORTED_EXTENSIONS = WORD_EXTENSIONS | EXCEL_EXTENSIONS | MARKDOWN_EXTENSIONS
+SUPPORTED_EXTENSIONS = (
+    WORD_EXTENSIONS | EXCEL_EXTENSIONS | MARKDOWN_EXTENSIONS | PDF_EXTENSIONS
+)
+# What a Markdown file can be converted into.
+MARKDOWN_TARGETS = {".docx", ".xlsx", ".pdf"}
 
 STATUS_SUCCESS = "success"
 STATUS_ERROR = "error"
@@ -75,8 +81,12 @@ class ConversionOptions:
     sheet_heading_level: int = 2
     promote_headings: bool = True
     split_sections: bool = False
+    # What a Markdown file turns into: ".docx" (Word) or ".xlsx" (Excel).
+    markdown_target: str = ".docx"
     # Only used by the Markdown -> Word direction.
     docx: DocxSettings = field(default_factory=DocxSettings)
+    # Only used by the Markdown -> Excel direction.
+    xlsx: XlsxSettings = field(default_factory=XlsxSettings)
 
 
 @dataclass
@@ -130,9 +140,11 @@ def collect_files(paths: Iterable[str | Path], recursive: bool = True) -> list[P
     return sorted(found, key=lambda p: str(p).lower())
 
 
-def output_suffix(source: Path) -> str:
-    """Markdown goes back to Word; everything else comes out as Markdown."""
-    return ".docx" if source.suffix.lower() in MARKDOWN_EXTENSIONS else ".md"
+def output_suffix(source: Path, markdown_target: str = ".docx") -> str:
+    """Markdown goes back to Office; everything else comes out as Markdown."""
+    if source.suffix.lower() not in MARKDOWN_EXTENSIONS:
+        return ".md"
+    return markdown_target if markdown_target in MARKDOWN_TARGETS else ".docx"
 
 
 def target_path(
@@ -376,6 +388,26 @@ def convert_docx_sections(
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def section_stems(
+    roots: Sequence[OutlineNode],
+    node_ids: Sequence[str],
+    source: Path,
+    split: bool,
+) -> list[str]:
+    """The file stems a section export would write, without exporting anything.
+
+    Lets a caller check for name clashes before the work starts.
+    """
+    selected = top_level_selection(roots, node_ids)
+    if not selected:
+        return []
+    if split or len(selected) == 1:
+        return [slugify_title(node.title, source.stem) for node in selected]
+    # Several sections merged into one file have no single heading to be named
+    # after, so the document keeps its own name.
+    return [source.stem]
+
+
 def _section_failed(
     source: Path, message: str, started: float
 ) -> list[ConversionResult]:
@@ -432,10 +464,8 @@ def _export_sections(
         body = extract_sections(
             markdown, node_ids, roots=roots, promote=options.promote_headings
         )
-        # Several sections merged into one file have no heading to be named
-        # after, so the document keeps its own name.
         alone = selected[0] if len(selected) == 1 else None
-        stem = source.stem if alone is None else slugify_title(alone.title, source.stem)
+        stem = section_stems(roots, node_ids, source, split=False)[0]
         return [
             _write_section(
                 source,
@@ -451,7 +481,8 @@ def _export_sections(
         ]
 
     results: list[ConversionResult] = []
-    for node in selected:
+    stems = section_stems(roots, node_ids, source, split=True)
+    for node, stem in zip(selected, stems):
         # Each file stands on its own, so its heading is promoted all the way
         # to H1 rather than by the amount the whole selection shares.
         body = section_text(markdown, node, promote=options.promote_headings)
@@ -459,7 +490,7 @@ def _export_sections(
             _write_section(
                 source,
                 output_dir,
-                slugify_title(node.title, source.stem),
+                stem,
                 body,
                 options,
                 warnings,
@@ -692,6 +723,39 @@ def _fallback_table(frame: pd.DataFrame) -> str:
 # --------------------------------------------------------------- dispatcher
 
 
+def markdown_to_pdf(
+    source: Path,
+    destination: Path,
+    options: ConversionOptions | None = None,
+    upgrader: LegacyUpgrader | None = None,
+) -> list[str]:
+    """Write a .md file as PDF, by way of the Word document it describes.
+
+    Every option of the Markdown -> Word direction therefore applies to the
+    page as well: font, size, paper, spacing, page breaks and the table of
+    contents.
+    """
+    options = options or ConversionOptions()
+    source, destination = Path(source), Path(destination)
+    owns = upgrader is None
+    upgrader = upgrader or LegacyUpgrader()
+    staging = Path(tempfile.mkdtemp(prefix="word2md-pdf-"))
+    try:
+        interim = staging / f"{source.stem}.docx"
+        warnings = markdown_to_docx(
+            source,
+            interim,
+            embed_images=options.extract_images,
+            add_title_heading=options.add_title_heading,
+            settings=options.docx,
+        )
+        return warnings + upgrader.to_pdf(interim, destination)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        if owns:
+            upgrader.close()
+
+
 def convert_file(
     source: str | Path,
     output_dir: str | Path,
@@ -724,19 +788,45 @@ def convert_file(
         if suffix not in SUPPORTED_EXTENSIONS:
             return finish(STATUS_SKIPPED, f"Bỏ qua định dạng {suffix or '(không rõ)'}.")
 
-        destination = target_path(source, output_dir, overwrite=options.overwrite)
+        destination = target_path(
+            source,
+            output_dir,
+            overwrite=options.overwrite,
+            suffix=output_suffix(source, options.markdown_target),
+        )
 
         if suffix in MARKDOWN_EXTENSIONS:
-            warnings = markdown_to_docx(
-                source,
-                destination,
-                embed_images=options.extract_images,
-                add_title_heading=options.add_title_heading,
-                settings=options.docx,
-            )
+            if destination.suffix.lower() == ".pdf":
+                warnings = markdown_to_pdf(source, destination, options, upgrader)
+                return finish(
+                    STATUS_SUCCESS, "Chuyển đổi thành công.", destination, warnings
+                )
+            if destination.suffix.lower() == ".xlsx":
+                warnings = markdown_to_xlsx(
+                    source,
+                    destination,
+                    embed_images=options.extract_images,
+                    add_title_heading=options.add_title_heading,
+                    settings=options.xlsx,
+                )
+            else:
+                warnings = markdown_to_docx(
+                    source,
+                    destination,
+                    embed_images=options.extract_images,
+                    add_title_heading=options.add_title_heading,
+                    settings=options.docx,
+                )
             return finish(STATUS_SUCCESS, "Chuyển đổi thành công.", destination, warnings)
 
-        if suffix in WORD_EXTENSIONS:
+        if suffix in PDF_EXTENSIONS:
+            markdown, warnings = pdf_to_markdown(
+                source,
+                image_dir=destination.parent / f"{destination.stem}_images",
+                extract_images=options.extract_images,
+                title=source.stem if options.add_title_heading else None,
+            )
+        elif suffix in WORD_EXTENSIONS:
             image_dir = destination.parent / f"{destination.stem}_images"
             attachment_dir = destination.parent / f"{destination.stem}_attachments"
             markdown, warnings = word_to_markdown(
@@ -773,10 +863,12 @@ def convert_many(
     options = options or ConversionOptions()
     results: list[ConversionResult] = []
     total = len(sources)
-    needs_legacy = any(
-        Path(source).suffix.lower() in LEGACY_EXTENSIONS for source in sources
+    suffixes = [Path(source).suffix.lower() for source in sources]
+    needs_office = any(suffix in LEGACY_EXTENSIONS for suffix in suffixes) or (
+        options.markdown_target == ".pdf"
+        and any(suffix in MARKDOWN_EXTENSIONS for suffix in suffixes)
     )
-    upgrader = LegacyUpgrader() if needs_legacy else None
+    upgrader = LegacyUpgrader() if needs_office else None
 
     try:
         for index, source in enumerate(sources, start=1):

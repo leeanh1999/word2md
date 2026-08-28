@@ -32,6 +32,7 @@ RTF_MAGIC = b"{\\rt"
 
 # Word: wdFormatDocumentDefault, Excel: xlOpenXMLWorkbook.
 WD_FORMAT_DOCX = 16
+WD_EXPORT_FORMAT_PDF = 17
 XL_FORMAT_XLSX = 51
 MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 
@@ -271,6 +272,39 @@ class LegacyUpgrader:
 
         return self._cached(source, target_suffix, run), []
 
+    def to_pdf(self, source: Path, target: Path) -> list[str]:
+        """Export a .docx as PDF, through whichever engine this machine has."""
+        source, target = Path(source).resolve(), Path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        backends = []
+        if has_msoffice("Word.Application"):
+            backends.append(("Microsoft Word", self._word_to_pdf))
+        if find_soffice():
+            backends.append(("LibreOffice", self._soffice_convert))
+        if not backends:
+            raise LegacyConversionError(
+                "Không xuất được PDF: máy chưa cài Microsoft Word hoặc LibreOffice."
+            )
+
+        attempts: list[str] = []
+        for name, runner in backends:
+            try:
+                runner(source, target)
+            except Exception as exc:  # noqa: BLE001 - try the next backend
+                attempts.append(f"{name}: {type(exc).__name__}: {exc}")
+                continue
+            if target.exists() and target.stat().st_size > 0:
+                if name == "LibreOffice":
+                    return [
+                        "PDF được xuất bằng LibreOffice; mục lục tự động có thể "
+                        "còn trống cho tới khi mở lại bằng Word."
+                    ]
+                return []
+            attempts.append(f"{name}: không tạo được file kết quả.")
+        raise LegacyConversionError(
+            "Không xuất được PDF. Đã thử: " + " | ".join(attempts)
+        )
+
     def _cached(self, source: Path, suffix: str, produce) -> Path:
         key = _identity(source)
         with _cache_lock:
@@ -355,6 +389,29 @@ class LegacyUpgrader:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _word_to_pdf(self, source: Path, target: Path) -> None:
+        app = self._word_app()
+        document = app.Documents.Open(
+            str(source),
+            ConfirmConversions=False,
+            ReadOnly=False,  # a table of contents has to be filled in first
+            AddToRecentFiles=False,
+            Visible=False,
+        )
+        try:
+            try:
+                document.Fields.Update()
+            except Exception:  # noqa: BLE001 - a document may have no fields
+                pass
+            document.ExportAsFixedFormat(
+                str(target), ExportFormat=WD_EXPORT_FORMAT_PDF
+            )
+        finally:
+            try:
+                document.Close(0)
+            except Exception:  # noqa: BLE001
+                pass
+
     def _excel_app(self):
         if self._excel is None:
             import win32com.client
@@ -392,7 +449,7 @@ class LegacyUpgrader:
 
         outdir = target.parent / f"{target.stem}_lo"
         outdir.mkdir(parents=True, exist_ok=True)
-        fmt = "docx" if target.suffix == ".docx" else "xlsx"
+        fmt = target.suffix.lower().lstrip(".") or "docx"
         profile = (outdir / "profile").as_uri()
 
         subprocess.run(

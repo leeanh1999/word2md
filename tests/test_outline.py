@@ -15,6 +15,7 @@ from src.converter import (  # noqa: E402
     ConversionOptions,
     convert_docx_sections,
     load_outline,
+    section_stems,
 )
 from src.outline import (  # noqa: E402
     build_outline,
@@ -105,6 +106,36 @@ class BuildOutlineTests(unittest.TestCase):
         text = outline_to_text(self.roots)
         self.assertEqual(len(text.splitlines()), len(self.nodes))
         self.assertIn("2.1.1", text)
+
+
+class SectionStemTests(unittest.TestCase):
+    """The names an export will use, predicted before it runs."""
+
+    def setUp(self):
+        self.roots = build_outline(DOC)
+        self.source = Path("tai lieu.docx")
+
+    def test_one_section_is_named_after_its_heading(self):
+        stems = section_stems(self.roots, ["2.1"], self.source, split=False)
+        self.assertEqual(stems, ["1.1 Mục con"])
+
+    def test_merged_sections_keep_the_document_name(self):
+        stems = section_stems(self.roots, ["2", "3"], self.source, split=False)
+        self.assertEqual(stems, ["tai lieu"])
+
+    def test_split_names_every_chosen_section(self):
+        stems = section_stems(self.roots, ["2", "3"], self.source, split=True)
+        self.assertEqual(stems, ["Chương 1", "Chương 2"])
+
+    def test_nested_selection_collapses_to_its_parent(self):
+        stems = section_stems(self.roots, ["2", "2.1"], self.source, split=True)
+        self.assertEqual(stems, ["Chương 1"])
+
+    def test_no_selection_writes_nothing(self):
+        self.assertEqual(section_stems(self.roots, [], self.source, split=True), [])
+        self.assertEqual(
+            section_stems(self.roots, ["nope"], self.source, split=False), []
+        )
 
 
 class ExtractionTests(unittest.TestCase):

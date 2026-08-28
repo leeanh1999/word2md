@@ -10,6 +10,81 @@ using the section below that matches the tag as the release notes.
 Only the newest release keeps its executables on GitHub. Older ones are removed:
 none of them can update itself, so downloading one is a dead end.
 
+## [1.5.0] - 2026-08-28
+
+Every file in the queue converts on its own now, PDF joins the formats in both
+directions, and Markdown can come out as a workbook as well as a document.
+
+### Added
+
+- **A "Chuyển" button on every row**, in both directions. It converts that one file with
+  the open tab's options and leaves the rest of the queue alone; the button at the bottom
+  still runs the whole tab. While anything is converting, the per-row buttons ("Chuyển",
+  "Mục…" and the remove ✕) are greyed out.
+- **A prompt when the result already exists.** Converting the same file a second time
+  asks what to do: *Yes* overwrites the old file, *No* writes it under a new name
+  (`tên (1).md`), *Cancel* converts nothing. It covers the row buttons, the batch button
+  and section extraction. Ticking **"Ghi đè file trùng tên"** answers *overwrite* up
+  front, so nothing is asked.
+- **Markdown → Excel.** The *Markdown → Word / Excel* tab has an output-format picker
+  ("Định dạng xuất"): **Word (.docx)** by default, or **Excel (.xlsx)**. On the command
+  line it is `--to word` / `--to excel`. Picking Excel greys out the Word-only options,
+  which have nothing to say about a workbook.
+- The new `src/md_to_xlsx.py` reuses the Markdown parser of the Word direction and writes
+  the workbook with `openpyxl`, mirroring what *Excel → Markdown* produces: one worksheet
+  per top-level section (a lone `#` title steps aside so its `##` sections become the
+  sheets), Markdown tables as real cells with a bold shaded header, column alignment,
+  sized columns and frozen headers, and plain numbers stored as numbers while `007` or
+  `12%` stay text. Headings, paragraphs, lists, quotes and code go down column A in
+  document order, and a cell that is only a link becomes a real hyperlink.
+- **Images are embedded in the workbook**, scaled to fit a 640×480 box, each on a row as
+  tall as the picture and with its alt text as a caption. This needs Pillow, now a
+  dependency (`pillow==12.3.0`); without it, or for a remote, missing or unreadable
+  image, the path is kept as text and a warning says why. An image inside a table cell
+  stays a path: a picture cannot live in a cell. `--no-images` and the *"Nhúng ảnh"*
+  checkbox turn embedding off, and that checkbox stays enabled for Excel.
+- The **font and size** chosen in the tab apply to the workbook as well (`--font`,
+  `--font-size`): they are written onto every cell, with headings a few points above the
+  body text and code blocks keeping Consolas at the body size. Those two dropdowns stay
+  enabled when the target is Excel; only the page options grey out.
+- Cells are **wrapped and top-aligned**, so long text grows the row instead of running
+  across the sheet, and a `<br>` inside a table cell shows as a second line. A column
+  with no table in it gets up to 90 characters of width for prose; a table's own width
+  wins where they share a column.
+
+- **PDF, in both directions.** A PDF dropped into the *Word / Excel / PDF → Markdown*
+  tab is read by the new `src/pdf.py` with `pdfplumber`: lines are grouped back into
+  paragraphs, the type sizes are ranked into a heading hierarchy (numbering like `2.1.3`
+  overriding the guess), ruled areas come back as Markdown tables whose text is not read
+  twice, bullet and numbered lines become lists, and embedded images are written out with
+  `pypdf` and linked. A scan with no text, a protected file or a file that is not a PDF is
+  reported as an error rather than an empty result.
+- The output-format picker offers **PDF (.pdf)** as well (`--to pdf`): the Markdown is
+  converted to a Word document and Word - or LibreOffice - prints it, so **every option of
+  the Markdown → Word direction applies to the page unchanged**, table of contents
+  included (its fields are updated before the export). Without Word or LibreOffice the
+  conversion fails with a message saying what to install.
+- New dependencies for the reading side: `pdfplumber==0.11.10` and `pypdf==6.16.2`.
+  Writing a PDF needs no new package - that is Word's or LibreOffice's job.
+
+### Changed
+
+- A one-file run reports in the status bar instead of opening a "Xong" message box.
+  Errors still open a dialog.
+- `converter.section_stems()` predicts the file names a section export will write, so the
+  clash prompt can list them before any work starts. `_export_sections()` uses the same
+  helper, so the names cannot drift apart.
+
+### Fixed
+
+- Control characters in a document - `\x0b`, which is what Word leaves behind for a
+  soft line break - made the Excel export fail with openpyxl's `IllegalCharacterError`.
+  They are stripped now, and `\x0b` / `\x0c` become real newlines.
+- Text starting with `=` was written as a **formula**, so Excel showed `#NAME?` instead of
+  the sentence. Such a cell is written as text now.
+- A cell longer than Excel's 32 767-character limit is cut, with a warning, instead of
+  producing a workbook Excel complains about.
+
 ## [1.4.2] - 2026-08-24
 
 ### Changed

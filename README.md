@@ -1,28 +1,42 @@
 # word2md
 
-Desktop app that converts **Word (.docx, .doc)** and **Excel (.xlsx, .xlsm, .xls)**
-files to **Markdown (.md)** — and **Markdown back to Word (.docx)** — with
-drag-and-drop and batch processing.
+Desktop app that converts **Word (.docx, .doc)**, **Excel (.xlsx, .xlsm, .xls)** and
+**PDF** files to **Markdown (.md)** — and **Markdown back to Word (.docx), Excel (.xlsx)
+or PDF** — with drag-and-drop and batch processing.
 
 ## Features
 
 - `customtkinter` interface (light / dark / follow system), with **one tab per
-  direction** — *Word / Excel → Markdown* and *Markdown → Word* — each with its own
-  file queue and its own options.
+  direction** — *Word / Excel / PDF → Markdown* and *Markdown → Word / Excel / PDF* —
+  each with its own file queue and its own options.
 - Drag & drop files or whole folders onto the window (via `tkinterdnd2`), or use the
   picker buttons.
 - Pick a folder → every convertible file inside is found recursively and sent to the
   tab that handles it.
 - Progress bar plus a per-file status list (pending / working / OK / error).
+- **A "Convert" button on every row**, in both directions: convert one file on its own,
+  with that tab's options, without touching the rest of the queue. The button at the
+  bottom still runs the whole tab in one go.
 - Conversion runs on a background thread with a cancel button; the UI never freezes.
 - One bad file does **not** stop the batch: the error is recorded and the next file
   is processed.
 - Choose the output folder, with an option to overwrite or auto-number `name (1).md`.
+- **Converting the same file twice asks first**: if the result already exists in the
+  output folder, a dialog offers *overwrite*, *write under a new name* (`name (1).md`)
+  or *cancel*. Ticking **"Ghi đè file trùng tên"** answers *overwrite* up front and
+  the question stops being asked.
 - **Extract parts of a Word document by section** (see below).
 - **Markdown back to Word**: drop a `.md` file in and get a real `.docx` with Word
   headings, lists, tables and embedded images — with a **font picker** (every font
   installed on the machine), font size, paper size, line spacing, a page break before
   each `H1` and an optional automatic table of contents.
+- **Markdown to Excel**: the same tab has an output-format picker — **Word (.docx)** by
+  default, or **Excel (.xlsx)**, where every top-level section becomes a worksheet, every
+  Markdown table becomes real cells, and images are embedded as pictures.
+- **PDF, both ways**: a PDF dropped in becomes Markdown — headings from the type sizes,
+  ruled areas as tables, embedded images written out beside the text — and the same
+  output-format picker offers **PDF (.pdf)**, printed from the Word document the
+  Markdown describes, so every Word option applies to the page.
 - **Files attached to a Word document** (PDF, HTML, ZIP…) are written out in their real
   format instead of the `.emf` icon Word shows for them.
 - **Updates itself**: the app checks GitHub Releases at startup, and one click
@@ -139,6 +153,12 @@ A4, line spacing 1.15 — the font a document gets when nothing is chosen:
 | Table of contents | checkbox | `--toc` | off |
 | Embed images | checkbox | `--no-images` to skip | on |
 | H1 from the file name | checkbox | `--no-title` to skip | on |
+| Output format | dropdown | `--to word` / `--to excel` / `--to pdf` | Word (.docx) |
+
+With the **PDF** target every option above applies unchanged — the PDF is printed from
+exactly that Word document. With the **Excel** target, *Font*, *Size* and *Embed images*
+still apply, and the file-name option names a sheet that has no heading of its own
+instead of adding an H1; the page options do not apply at all (see *Markdown → Excel*).
 
 The chosen font is written into the theme as well as into `Normal`, so the built-in
 heading styles follow it instead of quietly staying on the template's Calibri. Code
@@ -171,6 +191,93 @@ Details worth knowing:
   the structure it started with.
 - Pages are A4, and the document is given an H1 from the file name only when the
   Markdown has none of its own (`--no-title` turns that off).
+
+### Markdown → Excel
+
+The **"Định dạng xuất"** picker at the top of the *Markdown → Word / Excel* tab decides
+what a `.md` file turns into: **Word (.docx)**, the default, or **Excel (.xlsx)**. On the
+command line it is `--to word` / `--to excel`. **Font and size carry over to the
+workbook**; the rest of the options below shape a page, which a workbook does not have,
+so choosing Excel greys those out.
+
+`src/md_to_xlsx.py` reuses the same Markdown parser as the Word direction and writes the
+workbook with `openpyxl`, mirroring what *Excel → Markdown* produces:
+
+- **One worksheet per top-level section.** Usually that is the shallowest heading level
+  in the document; a lone `#` title with `##` sections under it steps aside so the `##`
+  sections become the sheets — exactly the shape *Excel → Markdown* writes. A document
+  with no headings at all becomes one sheet named after the file.
+- Sheet names are cleaned up the way Excel demands: `[ ] : * ? / \` removed, cut to 31
+  characters, and numbered `Tên (2)` when two sections share a name.
+- **Markdown tables become real cells**, with a bold, shaded header row, column widths
+  sized to the content, the column alignment from the `:---:` row, and frozen headers
+  when the table opens the sheet.
+- **The font and size are the ones picked in the tab** (`--font`, `--font-size`), written
+  onto every cell — a cell left without a font of its own would fall back to Calibri 11
+  when the file is reopened. A heading is set a few points above the body text, a caption
+  a point below it, and a code block keeps Consolas at the body size. Choose nothing and
+  Excel's own default is left alone.
+- **Long text wraps inside its cell** instead of running across the sheet: every cell is
+  wrapped and top-aligned, so Excel grows the row instead. A column with no table in it
+  is widened to 90 characters for prose; where a table shares the column, the table's
+  width wins and the text wraps inside it.
+- **Plain numbers become numbers**; anything else stays text, so `007`, `1,5` and `12%`
+  arrive intact.
+- Everything that is not a table — headings, paragraphs, lists (nested, with markers and
+  task marks), quotes, code blocks — is written down column A in document order, so the
+  document is not thinned out on the way in.
+- A cell that is nothing but a link becomes a **clickable hyperlink**; a link inside a
+  sentence keeps its URL in brackets.
+- **Images are embedded as pictures** (via `openpyxl` + Pillow), scaled down to fit a
+  640×480 box, each on a row made as tall as the picture, with the alt text as a caption
+  underneath. An image inside a table cell stays a path — a picture cannot live in a
+  cell — and so does one that is remote, missing, or unreadable; each case is reported
+  as a warning instead of failing the file. `--no-images` / the *"Nhúng ảnh"* checkbox
+  turns embedding off.
+- Nothing a spreadsheet chokes on survives the trip: control characters are stripped
+  (Word's `` soft break becomes a real newline), a cell over Excel's 32 767
+  characters is cut with a warning, and text that happens to start with `=` is written
+  as text, not as a formula.
+
+### PDF → Markdown
+
+A PDF says where ink goes, not what the text means, so `src/pdf.py` puts the structure
+back together with `pdfplumber` (on `pdfminer.six`) — no Office needed, and no external
+program:
+
+- **Lines are grouped back into paragraphs.** Words are re-joined into the line they were
+  printed on, and consecutive lines stay in one paragraph until the vertical gap between
+  them grows by half a line, which is where a new paragraph starts.
+- **Headings come from the type sizes, ranked rather than measured.** Every size larger
+  than the body text is ranked, largest first, as `#`, `##`, `###`… so a document whose
+  headings are only a point above its body text still comes out with a hierarchy. A short
+  bold line at body size counts as one step deeper, and numbering like `2.1.3` overrides
+  the guess with the depth it states.
+- **Ruled areas become Markdown tables**, and the text inside them is not read a second
+  time as prose. `|` inside a cell is escaped and a line break inside a cell becomes
+  `<br>`, the same as the Excel direction.
+- Bullet and numbered lines (`•`, `-`, `1.`) become Markdown lists, tightly grouped.
+- **Embedded images are written out** to `name_images/` with `pypdf` and linked from the
+  page they appeared on. A PDF that is only a scan has no text to find, and says so
+  instead of writing an empty file.
+- A password-protected file, a broken file or one that is not a PDF at all is reported as
+  an error, not a traceback.
+
+Word could reflow a PDF into a `.docx` instead, and it does that well — but it stops on a
+*"Word will now convert your PDF"* notice that no automation flag turns off. In testing a
+250 KB file took nearly seven minutes that way; the same file takes about a second here.
+
+### Markdown → PDF
+
+Choosing **PDF (.pdf)** in the output-format picker (`--to pdf`) converts the Markdown to
+a Word document first and has Word — or LibreOffice — print it. **Every option of the
+*Markdown → Word* direction therefore applies to the PDF as well**: font, size, paper,
+line spacing, the page break before each `H1`, embedded images and the table of contents.
+
+The table of contents is filled in before the export (`Fields.Update()`), so the PDF
+carries a real one. LibreOffice does not do that, and says so in a warning when it is the
+engine that ran. Without Word or LibreOffice there is no PDF: laying out a page is not
+something to reimplement, so the conversion fails with a message saying what to install.
 
 ### Excel → Markdown
 
@@ -230,6 +337,8 @@ word2md/
 │   ├── attachments.py         # OLE objects -> real files + links
 │   ├── html_to_markdown.py    # HTML (mammoth) -> Markdown
 │   ├── md_to_docx.py          # Markdown -> Word (python-docx)
+│   ├── md_to_xlsx.py          # Markdown -> Excel (openpyxl)
+│   ├── pdf.py                 # PDF -> Markdown (pdfplumber), and back via Word
 │   ├── legacy.py              # .doc/.xls backends + OLE parser
 │   ├── outline.py             # Outline tree + partial extraction
 │   ├── section_dialog.py      # Section picker window
@@ -239,6 +348,8 @@ word2md/
 │   ├── make_samples.py        # Generates test.docx / test.xlsx / corrupt.docx
 │   ├── test_converter.py      # Unit tests for the engine and HTML -> Markdown
 │   ├── test_md_to_docx.py     # Unit tests for Markdown -> Word (+ round trips)
+│   ├── test_md_to_xlsx.py     # Unit tests for Markdown -> Excel
+│   ├── test_pdf.py            # Unit tests for both PDF directions
 │   ├── test_attachments.py    # Unit tests for OLE attachments
 │   ├── test_outline.py        # Unit tests for the outline and extraction
 │   ├── test_legacy.py         # Unit tests for .doc/.xls
@@ -265,8 +376,13 @@ python -m venv .venv
 .venv\Scripts\python.exe main.py report.docx data.xlsx -o output
 .venv\Scripts\python.exe main.py .\documents -o .\md --overwrite
 
-# The other way round: Markdown -> Word
+# PDF in
+.venv\Scripts\python.exe main.py report.pdf -o output
+
+# The other way round: Markdown -> Word, Excel or PDF
 .venv\Scripts\python.exe main.py notes.md -o output
+.venv\Scripts\python.exe main.py notes.md --to excel -o output
+.venv\Scripts\python.exe main.py notes.md --to pdf -o output
 .venv\Scripts\python.exe main.py .\md -o .\docx --overwrite
 .venv\Scripts\python.exe main.py notes.md --font Arial --font-size 12 --toc
 
@@ -285,7 +401,7 @@ python -m venv .venv
 ```
 
 CLI options: `-o/--output`, `--no-recursive`, `--no-images`, `--no-attachments`,
-`--overwrite`, `--no-title`, `--backends`, `--font`, `--font-size`, `--page-size`,
+`--overwrite`, `--no-title`, `--backends`, `--to`, `--font`, `--font-size`, `--page-size`,
 `--line-spacing`, `--page-break-h1`, `--toc`, `--list-sections`,
 `--sections ID[,ID…]`, `--split-sections`, `--no-promote`. The `--sections` group accepts exactly one Word
 file. Exit codes: `0` success, `1` bad arguments / file not found, `2` some files
@@ -432,6 +548,13 @@ emulation layer, just slower.
   drawings) are still written out in that format: they are images, not attachments,
   and converting vector metafiles would need a rendering engine.
 - Files currently open in Word/Excel may raise a permission error; close them and retry.
+- A PDF has no styles to read, so its structure is inferred: headings come from type
+  sizes and numbering, paragraphs from the gaps between lines. A layout with columns,
+  headers and footers, or a table drawn without rules will not come back cleanly, and a
+  scanned PDF has no text at all to find (there is no OCR here).
+- Markdown -> PDF needs Microsoft Word or LibreOffice: laying out a page is left to a
+  real Office engine rather than reimplemented. LibreOffice may leave an automatic table
+  of contents empty until the file is opened in Word.
 - Markdown → Word covers the Markdown this app produces plus common CommonMark; raw
   HTML blocks, footnotes, definition lists and reference-style links are not
   interpreted. Table column alignment reaches the `.docx` but not the Markdown coming

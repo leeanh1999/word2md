@@ -6,9 +6,15 @@ convert from the command line:
     python main.py report.docx data.xlsx -o output
     python main.py .\\documents -o .\\md
 
-Markdown goes the other way, back into Word:
+A PDF is read the same way a Word file is:
+
+    python main.py report.pdf -o output
+
+Markdown goes the other way - back into Word, or into Excel or PDF:
 
     python main.py report.md -o output
+    python main.py report.md --to excel -o output
+    python main.py report.md --to pdf -o output
 
 Partial extraction follows the document's navigation outline:
 
@@ -72,6 +78,7 @@ def _run_cli(argv: list[str]) -> int:
         PAGE_SIZES,
         DocxSettings,
     )
+    from src.md_to_xlsx import XlsxSettings
 
     parser = argparse.ArgumentParser(
         prog="word2md", description=f"{__app_name__} v{__version__}"
@@ -103,7 +110,15 @@ def _run_cli(argv: list[str]) -> int:
         "--no-title", action="store_true", help="Không thêm tiêu đề từ tên file"
     )
 
-    docx_group = parser.add_argument_group("Markdown → Word (chỉ với file .md)")
+    docx_group = parser.add_argument_group(
+        "Markdown → Word / Excel / PDF (chỉ với file .md)"
+    )
+    docx_group.add_argument(
+        "--to",
+        choices=["word", "excel", "pdf"],
+        default="word",
+        help="Định dạng xuất: word = .docx (mặc định), excel = .xlsx, pdf = .pdf",
+    )
     docx_group.add_argument(
         "--font", default=DEFAULT_FONT, help=f"Font chữ, mặc định {DEFAULT_FONT}"
     )
@@ -156,9 +171,14 @@ def _run_cli(argv: list[str]) -> int:
     if args.backends:
         from src.legacy import available_backends
 
+        from src.pdf import pdf_backends
+
         found = available_backends()
         print("Backend đọc định dạng cũ (.doc/.xls) trên máy này:")
         for backend in found or ["(không có)"]:
+            print(f"  - {backend}")
+        print("Backend cho PDF:")
+        for backend in pdf_backends() or ["(không có)"]:
             print(f"  - {backend}")
         return 0
 
@@ -167,7 +187,7 @@ def _run_cli(argv: list[str]) -> int:
 
     files = collect_files(args.inputs, recursive=not args.no_recursive)
     if not files:
-        print("Không tìm thấy file Word/Excel/Markdown nào.", file=sys.stderr)
+        print("Không tìm thấy file Word/Excel/PDF/Markdown nào.", file=sys.stderr)
         return 1
 
     options = ConversionOptions(
@@ -177,6 +197,7 @@ def _run_cli(argv: list[str]) -> int:
         add_title_heading=not args.no_title,
         promote_headings=not args.no_promote,
         split_sections=args.split_sections,
+        markdown_target={"excel": ".xlsx", "pdf": ".pdf"}.get(args.to, ".docx"),
         docx=DocxSettings(
             font=args.font,
             font_size=args.font_size,
@@ -185,6 +206,7 @@ def _run_cli(argv: list[str]) -> int:
             page_break_before_h1=args.page_break_h1,
             table_of_contents=args.toc,
         ),
+        xlsx=XlsxSettings(font=args.font, font_size=args.font_size),
     )
 
     if args.list_sections or args.sections:

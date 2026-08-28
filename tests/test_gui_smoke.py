@@ -171,6 +171,222 @@ def check_markdown_tab(app, tmp_path: Path, out_dir: Path) -> None:
     app.root.update()
 
 
+class FakeMessagebox:
+    """Stands in for tkinter.messagebox so no dialog waits for a human."""
+
+    WARNING = "warning"
+
+    def __init__(self, answer=None):
+        self.answer = answer  # what askyesnocancel replies
+        self.asked: list[str] = []
+        self.shown: list[tuple[str, str]] = []
+
+    def askyesnocancel(self, title, message, **kwargs):
+        self.asked.append(message)
+        return self.answer
+
+    def showinfo(self, title, message="", **kwargs):
+        self.shown.append(("info", title))
+
+    def showwarning(self, title, message="", **kwargs):
+        self.shown.append(("warning", title))
+
+    def showerror(self, title, message="", **kwargs):
+        self.shown.append(("error", title))
+
+
+def pump(app, ready, timeout: float = 60) -> None:
+    deadline = time.time() + timeout
+    while not ready() and time.time() < deadline:
+        app.root.update()
+        time.sleep(0.02)
+    assert ready(), "the app never got there"
+
+
+def click_convert(app, row) -> None:
+    """Press one row's own button, once the last run has let go of it."""
+    pump(app, lambda: row.convert_button.cget("state") == "normal")
+    row.convert_button.invoke()
+
+
+def check_row_conversion(app, tmp_path: Path, out_dir: Path) -> None:
+    """Convert a single row on its own, then answer the overwrite question."""
+    import src.gui as gui
+    from src.gui import TAB_TO_WORD
+
+    source = tmp_path / "riêng lẻ.md"
+    source.write_text("# Riêng lẻ\n\nMột đoạn.\n", encoding="utf-8")
+
+    app.add_paths([source])
+    app.output_dir.set(str(out_dir))
+    app.root.update()
+
+    row = app.queues[TAB_TO_WORD].rows[source]
+    assert row.convert_button is not None, "every row needs its own button"
+
+    fake = FakeMessagebox()
+    original, gui.messagebox = gui.messagebox, fake
+    # main() left a printing stub in place; the real one decides about dialogs.
+    stub_report, app._report = app._report, type(app)._report.__get__(app)
+    try:
+        # 1. First run: no clash, so nothing is asked and nothing pops up.
+        click_convert(app, row)
+        pump(app, lambda: row.badge.cget("text") == "OK")
+        produced = out_dir / "riêng lẻ.docx"
+        assert produced.is_file(), sorted(p.name for p in out_dir.iterdir())
+        assert not fake.asked, fake.asked
+        assert not fake.shown, "a one-file run must not open a dialog"
+        print(f"\nRow conversion OK -> {produced.name}")
+
+        # 2. Same file again, answering "new name".
+        fake.answer = False
+        click_convert(app, row)
+        pump(app, lambda: (out_dir / "riêng lẻ (1).docx").is_file())
+        assert len(fake.asked) == 1, fake.asked
+        assert "riêng lẻ.docx" in fake.asked[0], fake.asked[0]
+        print("  clash -> new name: riêng lẻ (1).docx")
+
+        # 3. Answering "overwrite" reuses the same name.
+        before = sorted(p.name for p in out_dir.iterdir())
+        fake.answer = True
+        click_convert(app, row)
+        pump(app, lambda: not app._is_running() and row.badge.cget("text") == "OK")
+        app.root.update()
+        assert sorted(p.name for p in out_dir.iterdir()) == before, "no new file wanted"
+        print("  clash -> overwrite: no extra file")
+
+        # 4. Cancelling leaves the folder alone and never starts a worker.
+        fake.answer = None
+        click_convert(app, row)
+        app.root.update()
+        assert not app._is_running(), "cancel must not start a conversion"
+        assert sorted(p.name for p in out_dir.iterdir()) == before, before
+        print("  clash -> cancel: nothing written")
+    finally:
+        gui.messagebox = original
+        app._report = stub_report
+
+    app.queues[TAB_TO_WORD].clear()
+    app.root.update()
+
+
+def check_excel_target(app, tmp_path: Path, out_dir: Path) -> None:
+    """The Markdown tab writes a workbook when the format picker says so."""
+    from openpyxl import load_workbook
+
+    from src.gui import DEFAULT_MARKDOWN_TARGET, TAB_TO_MARKDOWN, TAB_TO_WORD
+
+    source = tmp_path / "bảng biểu.md"
+    source.write_text(
+        "# Báo cáo\n\n## Doanh thu\n\n| Tháng | Tiền |\n|---|---:|\n"
+        "| 01 | 1200 |\n",
+        encoding="utf-8",
+    )
+
+    app.add_paths([source])
+    app.output_dir.set(str(out_dir))
+    app.root.update()
+    assert app.markdown_target.get() == DEFAULT_MARKDOWN_TARGET, "Word is the default"
+    assert app.markdown_suffix() == ".docx"
+
+    row = app.queues[TAB_TO_WORD].rows[source]
+    app.markdown_target.set("Excel (.xlsx)")
+    app._on_markdown_target_changed()
+    app.root.update()
+    assert app.markdown_suffix() == ".xlsx"
+    for widget in app.docx_only_widgets:
+        assert widget.cget("state") == "disabled", "page options must grey out"
+    # The font picker survives the switch: a workbook has a font too.
+    app.font_name.set("Arial")
+    app.font_size.set("14")
+
+    click_convert(app, row)
+    pump(app, lambda: row.badge.cget("text") == "OK")
+    produced = out_dir / "bảng biểu.xlsx"
+    assert produced.is_file(), sorted(p.name for p in out_dir.iterdir())
+
+    book = load_workbook(produced)
+    assert book.sheetnames == ["Doanh thu"], book.sheetnames
+    sheet = book["Doanh thu"]
+    assert list(sheet.iter_rows(values_only=True)) == [
+        ("Tháng", "Tiền"),
+        ("01", 1200),
+    ]
+    font = sheet["A2"].font
+    assert (font.name, font.size) == ("Arial", 14.0), (font.name, font.size)
+    assert sheet["A2"].alignment.wrap_text, "cells must wrap, not overflow"
+    print(f"\nExcel target OK -> {produced.name} {book.sheetnames}")
+
+    app.markdown_target.set(DEFAULT_MARKDOWN_TARGET)
+    app._on_markdown_target_changed()
+    for widget in app.docx_only_widgets:
+        assert widget.cget("state") == "normal", "Word options must come back"
+
+    app.queues[TAB_TO_WORD].clear()
+    app.tabs.set(TAB_TO_MARKDOWN)
+    app.root.update()
+
+
+def check_pdf_target(app, tmp_path: Path, out_dir: Path) -> None:
+    """The Markdown tab prints a PDF, and the PDF tab reads one back."""
+    from src.gui import DEFAULT_MARKDOWN_TARGET, TAB_TO_MARKDOWN, TAB_TO_WORD
+    from src.pdf import can_write_pdf, looks_like_pdf
+
+    if not can_write_pdf():
+        print("\nPDF target skipped: no Word or LibreOffice on this machine")
+        return
+
+    source = tmp_path / "tài liệu in.md"
+    source.write_text(
+        "# Báo cáo quý III\n\nĐoạn mở đầu.\n\n## 1. Số liệu\n\n"
+        "| Tháng | Tiền |\n|---|---:|\n| 01 | 1200 |\n",
+        encoding="utf-8",
+    )
+
+    app.add_paths([source])
+    app.output_dir.set(str(out_dir))
+    app.root.update()
+
+    row = app.queues[TAB_TO_WORD].rows[source]
+    app.markdown_target.set("PDF (.pdf)")
+    app._on_markdown_target_changed()
+    app.root.update()
+    assert app.markdown_suffix() == ".pdf"
+    # A PDF is printed from a Word document, so every option still applies.
+    for widget in app.docx_only_widgets:
+        assert widget.cget("state") == "normal", "PDF keeps the Word options"
+
+    click_convert(app, row)
+    pump(app, lambda: row.badge.cget("text") == "OK", timeout=180)
+    produced = out_dir / "tài liệu in.pdf"
+    assert produced.is_file(), sorted(p.name for p in out_dir.iterdir())
+    assert looks_like_pdf(produced), "that is not a PDF"
+    print(f"\nPDF target OK -> {produced.name} ({produced.stat().st_size} bytes)")
+
+    app.queues[TAB_TO_WORD].clear()
+    app.markdown_target.set(DEFAULT_MARKDOWN_TARGET)
+    app._on_markdown_target_changed()
+
+    # And the same file, read straight back into the Markdown queue.
+    app.tabs.set(TAB_TO_MARKDOWN)
+    app.add_paths([produced])
+    app.root.update()
+    pdf_row = app.queues[TAB_TO_MARKDOWN].rows[produced]
+    assert pdf_row.sections_button is None, "a PDF has no Word outline"
+
+    click_convert(app, pdf_row)
+    pump(app, lambda: pdf_row.badge.cget("text") == "OK", timeout=180)
+    back = out_dir / "tài liệu in.md"
+    assert back.is_file(), sorted(p.name for p in out_dir.iterdir())
+    markdown = back.read_text(encoding="utf-8")
+    assert "Đoạn mở đầu." in markdown, markdown[:200]
+    assert "| Tháng | Tiền |" in markdown, markdown[:400]
+    print(f"PDF read back OK -> {back.name} ({len(markdown)} ký tự)")
+
+    app.queues[TAB_TO_MARKDOWN].clear()
+    app.root.update()
+
+
 def main() -> int:
     from src.gui import DND_AVAILABLE, App
     from src.gui import legacy_support_note as gui_legacy_note
@@ -223,6 +439,9 @@ def main() -> int:
         check_section_dialog(app, samples["docx"], tmp_path / "sections")
         check_app_wiring(app, samples["docx"], tmp_path / "wired")
         check_markdown_tab(app, tmp_path, tmp_path / "docx_out")
+        check_row_conversion(app, tmp_path, tmp_path / "row_out")
+        check_excel_target(app, tmp_path, tmp_path / "xlsx_out")
+        check_pdf_target(app, tmp_path, tmp_path / "pdf_out")
 
         app.clear_files()
         app.root.update()
