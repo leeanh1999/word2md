@@ -32,6 +32,7 @@ from .converter import (
     section_stems,
 )
 from .md_to_xlsx import XlsxSettings
+from .ocr import can_ocr, ocr_support_note
 from .pdf import pdf_support_note
 from .legacy import can_read_xls, find_soffice, has_msoffice
 from .md_to_docx import (
@@ -417,6 +418,7 @@ class App:
         self.extract_images = ctk.BooleanVar(value=True)
         self.extract_attachments = ctk.BooleanVar(value=True)
         self.add_title = ctk.BooleanVar(value=True)
+        self.ocr_scanned_pdf = ctk.BooleanVar(value=can_ocr())
 
         # Markdown -> Word / Excel
         self.markdown_target = ctk.StringVar(value=DEFAULT_MARKDOWN_TARGET)
@@ -535,6 +537,9 @@ class App:
         ).pack(side="left", padx=(0, 18))
         ctk.CTkCheckBox(
             checks, text="Thêm tiêu đề từ tên file", variable=self.add_title
+        ).pack(side="left", padx=(0, 18))
+        ctk.CTkCheckBox(
+            checks, text="OCR trang PDF scan", variable=self.ocr_scanned_pdf
         ).pack(side="left")
         return pane
 
@@ -822,6 +827,7 @@ class App:
             extract_attachments=self.extract_attachments.get(),
             overwrite=overwrite,
             add_title_heading=self.add_title.get(),
+            ocr_scanned_pdf=self.ocr_scanned_pdf.get(),
         )
 
     # -------------------------------------------------- section extraction

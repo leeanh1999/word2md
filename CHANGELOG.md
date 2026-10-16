@@ -10,6 +10,70 @@ using the section below that matches the tag as the release notes.
 Only the newest release keeps its executables on GitHub. Older ones are removed:
 none of them can update itself, so downloading one is a dead end.
 
+## [1.6.0] - 2026-10-16
+
+Two PDFs that used to come out wrong: a table ruled down its columns only, and a page
+that is nothing but a scan — which is now read, and read in Vietnamese, by the `.exe`
+too.
+
+### Added
+
+- **Scanned PDF pages are read by OCR.** A page with no text in it is drawn at 300 dpi
+  with `pypdfium2` and handed to **Windows.Media.Ocr** — the engine Windows ships with,
+  the one behind PowerToys' Text Extractor — through the `winrt` bindings. Nothing extra
+  has to be installed, and a page that already has text never goes near it.
+- The words come back **placed on the page**, so the layout pass that reads an ordinary
+  PDF runs over them unchanged and a scan keeps its headings, paragraphs, lists and
+  tables instead of arriving as a wall of text. An aligned block of three or more lines
+  broken by the same lanes of white becomes a Markdown table; prose leaves no lane and
+  stays prose.
+- **"OCR trang PDF scan"** in the *Word / Excel / PDF → Markdown* tab, `--no-ocr` on the
+  command line. It starts ticked where an engine is available. The drop area now says
+  which recognisers the machine has.
+- The page picture of a scan is no longer written to `name_images/` and linked: its text
+  is already in the Markdown.
+
+### Fixed
+
+- **A table that rules its columns and not its rows no longer collapses into one row.**
+  A bank statement or an invoice usually draws the column rules and leaves the rows to
+  alignment alone, and read literally that is a single row holding every date of the
+  month in one cell, joined by `<br>`. When a cell comes back with line breaks in it the
+  block is cut again — the column rules give the columns, the printed lines give the
+  rows — and a line starting with an empty first column is folded back into the row above
+  it as the tail of a long description.
+- **A page that is nothing but a table is no longer mistaken for a scan.** Only loose
+  lines of text were counted when deciding whether a page had been read, so a page whose
+  every word sat inside a table looked empty and was sent off to OCR, which then wrote
+  its own reading over a perfectly good one.
+
+- **Vietnamese is read by VietOCR.** Reading a scan is two jobs and
+  they are now done by two tools: Windows OCR finds every word and puts a box round it —
+  it is good at that whatever the language — and VietOCR reads the letters inside the
+  box. Windows has no Vietnamese recogniser and spells `Tài liệu` as `Tåi liéu`; VietOCR
+  is trained on the language and gets it right. Only the text is replaced, so the layout
+  keeps coming from the boxes. It helps an English page too: `1.200.ooo` becomes
+  `1.200.000`.
+- **The reader ships inside the `.exe`, without torch.** VietOCR's `vgg_seq2seq` model is
+  exported to ONNX, quantised to 8-bit weights (90 MB → 27 MB) and run by `onnxruntime`,
+  so the executable grows by about 32 MB instead of the half a gigabyte torch would cost.
+  On 240 rendered, blurred and noised lines it reads as well as the torch original
+  (0.05% character errors against 0.09%) and faster (73 ms a line against 106 ms).
+  `tools/export_vietocr_onnx.py` regenerates `src/models/vietocr/` from the torch model;
+  `requirements-export.txt` lists what that takes.
+
+### Known limitations
+
+- onnxruntime has to be imported before the `winrt` bindings are: winrt carries an
+  `msvcp140.dll` (14.29) too old for onnxruntime, and whichever loads first fixes the
+  runtime for the process — winrt first and onnxruntime dies with an access violation.
+  `src/ocr.py` imports onnxruntime at the top of the module, and `build.py` does the same
+  for PyInstaller's analysis processes through a temporary `sitecustomize`.
+- VietOCR reads a line, not a page: handed a whole statement row it answers with
+  nonsense, so crops are cut at the wide gaps first. It also swallows a leading `-` and
+  runs `2.` into the word after it, so list markers are restored from the Windows
+  reading.
+
 ## [1.5.0] - 2026-08-28
 
 Every file in the queue converts on its own now, PDF joins the formats in both
@@ -243,6 +307,7 @@ The app updates itself now.
 Older versions have no release to download any more, so each one links to the tag
 it was built from. 1.0.0 predates tagging and links to its commit.
 
+[1.6.0]: https://github.com/leeanh1999/word2md/releases/tag/v1.6.0
 [1.4.2]: https://github.com/leeanh1999/word2md/releases/tag/v1.4.2
 [1.4.1]: https://github.com/leeanh1999/word2md/tree/v1.4.1
 [1.3.1]: https://github.com/leeanh1999/word2md/tree/v1.3.1

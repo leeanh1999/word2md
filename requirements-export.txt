@@ -1,0 +1,38 @@
+# Only for re-exporting the VietOCR model - the app itself does not need any of this.
+#
+# The app reads scanned Vietnamese with the ONNX model in src/models/vietocr,
+# run by onnxruntime (requirements.txt). Producing those files takes the
+# original torch model, so this is needed only to regenerate them:
+#
+#     pip install --no-deps vietocr==0.3.13
+#     pip install -r requirements-export.txt
+#     python tools/export_vietocr_onnx.py
+#
+# --no-deps on the first line is not optional. vietocr pins pillow==10.2.0,
+# which has no wheel for Python 3.13 and would drag the rest of the app back off
+# the pillow it needs, and it pins imgaug, albumentations, lmdb and
+# scikit-image, which only its training code ever imports.
+#
+# torch unpacks to about 520 MB; build.py excludes it, so having it installed
+# on the build machine does not leak it into the .exe.
+
+# The model as trained. Only the CPU build is wanted.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0
+torchvision==0.28.0
+
+# What vietocr itself imports at inference time, and nothing else.
+einops==0.8.2
+gdown==6.1.0
+pyyaml==6.0.3
+numpy==2.5.1
+
+# gdown fetches the model weights on first use and needs these to do it.
+beautifulsoup4==4.15.0
+requests==2.34.2
+tqdm==4.70.0
+filelock==3.32.3
+
+# Writing and quantising the ONNX graphs.
+onnx==1.23.2
+onnxscript==0.7.2

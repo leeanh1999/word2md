@@ -20,16 +20,20 @@ Equivalent raw command on Windows:
         --hidden-import tabulate --hidden-import openpyxl \
         --hidden-import PIL.Image --hidden-import pdfplumber \
         --hidden-import pypdf --collect-data pdfminer \
+        --hidden-import pypdfium2 --collect-all winrt \
         main.py
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import platform
 import shutil
 import struct
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -47,7 +51,24 @@ EXCLUDES = [
     "PySide2",
     "test",
     "unittest",
+    # Vietnamese OCR runs VietOCR as ONNX through onnxruntime. torch and the
+    # vietocr package are only needed to export the model
+    # (tools/export_vietocr_onnx.py); torch alone would take the .exe to well
+    # over half a gigabyte, so a build machine that has them must not pull
+    # them in by accident. The same goes for onnx and the parts of onnxruntime
+    # that quantise or optimise a model rather than run it.
+    "torch",
+    "torchvision",
+    "vietocr",
+    "onnx",
+    "onnxscript",
+    "onnxruntime.quantization",
+    "onnxruntime.tools",
+    "onnxruntime.transformers",
 ]
+
+# The exported VietOCR model, read by src/vietocr_onnx.py from the bundle.
+VIETOCR_MODEL = ROOT / "src" / "models" / "vietocr"
 
 # The short names used in file names, keyed by what platform.machine() reports.
 ARCH_ALIASES = {
@@ -165,6 +186,32 @@ def remove_artefacts(name: str) -> None:
     (ROOT / f"{name}.spec").unlink(missing_ok=True)
 
 
+@contextlib.contextmanager
+def _onnxruntime_first():
+    """Make every Python PyInstaller starts import onnxruntime before winrt.
+
+    winrt brings an msvcp140.dll too old for onnxruntime, and whichever of the
+    two loads first fixes the runtime for the whole process (see src/ocr.py).
+    PyInstaller's analysis imports packages in child processes, in whatever
+    order the import graph gives, so a sitecustomize on PYTHONPATH loads
+    onnxruntime in each of them before anything else gets the chance.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        Path(scratch, "sitecustomize.py").write_text(
+            "try:\n    import onnxruntime  # noqa: F401\nexcept Exception:\n    pass\n",
+            encoding="utf-8",
+        )
+        previous = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [scratch, previous]))
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = previous
+
+
 def build(
     onefile: bool = True,
     clean: bool = False,
@@ -223,6 +270,11 @@ def build(
         "pypdf",
         "--collect-data",
         "pdfminer",
+        # OCR of a scanned page: pypdfium2 draws the page and the winrt
+        # bindings reach the OCR engine Windows ships with. Both are imported
+        # only when a scan actually turns up, so nothing finds them statically.
+        "--hidden-import",
+        "pypdfium2",
         "--hidden-import",
         "xlrd",
         # .doc / .xls support: OLE parsing plus Office automation.
@@ -231,6 +283,18 @@ def build(
     ]
     if sys.platform == "win32":
         args += [
+            "--collect-all",
+            "winrt",
+            "--hidden-import",
+            "winrt.windows.media.ocr",
+            "--hidden-import",
+            "winrt.windows.graphics.imaging",
+            "--hidden-import",
+            "winrt.windows.storage.streams",
+            "--hidden-import",
+            "winrt.windows.globalization",
+            "--hidden-import",
+            "winrt.windows.foundation.collections",
             "--hidden-import",
             "pythoncom",
             "--hidden-import",
@@ -240,13 +304,23 @@ def build(
             "--hidden-import",
             "win32com.client",
         ]
+    # Vietnamese OCR: onnxruntime runs the VietOCR model shipped as data.
+    args += ["--hidden-import", "onnxruntime"]
+    if VIETOCR_MODEL.is_dir():
+        args += ["--add-data", f"{VIETOCR_MODEL}{os.pathsep}src/models/vietocr"]
+    else:
+        print(
+            "CẢNH BÁO: thiếu src/models/vietocr - bản build sẽ đọc scan tiếng Việt "
+            "bằng Windows OCR (sai dấu). Chạy tools/export_vietocr_onnx.py trước.\n"
+        )
     for module in EXCLUDES:
         args += ["--exclude-module", module]
     if ICON.exists():
         args += ["--icon", str(ICON)]
 
     print("pyinstaller " + " ".join(args[1:]) + "\n")
-    PyInstaller.__main__.run(args)
+    with _onnxruntime_first():
+        PyInstaller.__main__.run(args)
 
     suffix = ".exe" if sys.platform == "win32" else ""
     return ROOT / "dist" / (f"{name}{suffix}" if onefile else name)

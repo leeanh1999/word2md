@@ -81,6 +81,8 @@ class ConversionOptions:
     sheet_heading_level: int = 2
     promote_headings: bool = True
     split_sections: bool = False
+    # Read a scanned PDF page with the OCR engine Windows ships with.
+    ocr_scanned_pdf: bool = True
     # What a Markdown file turns into: ".docx" (Word) or ".xlsx" (Excel).
     markdown_target: str = ".docx"
     # Only used by the Markdown -> Word direction.
@@ -825,6 +827,7 @@ def convert_file(
                 image_dir=destination.parent / f"{destination.stem}_images",
                 extract_images=options.extract_images,
                 title=source.stem if options.add_title_heading else None,
+                ocr=options.ocr_scanned_pdf,
             )
         elif suffix in WORD_EXTENSIONS:
             image_dir = destination.parent / f"{destination.stem}_images"

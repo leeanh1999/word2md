@@ -109,6 +109,11 @@ def _run_cli(argv: list[str]) -> int:
     parser.add_argument(
         "--no-title", action="store_true", help="Không thêm tiêu đề từ tên file"
     )
+    parser.add_argument(
+        "--no-ocr",
+        action="store_true",
+        help="Không OCR những trang PDF chỉ có ảnh scan",
+    )
 
     docx_group = parser.add_argument_group(
         "Markdown → Word / Excel / PDF (chỉ với file .md)"
@@ -195,6 +200,7 @@ def _run_cli(argv: list[str]) -> int:
         extract_attachments=not args.no_attachments,
         overwrite=args.overwrite,
         add_title_heading=not args.no_title,
+        ocr_scanned_pdf=not args.no_ocr,
         promote_headings=not args.no_promote,
         split_sections=args.split_sections,
         markdown_target={"excel": ".xlsx", "pdf": ".pdf"}.get(args.to, ".docx"),

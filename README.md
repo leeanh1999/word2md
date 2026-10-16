@@ -256,10 +256,107 @@ program:
 - **Ruled areas become Markdown tables**, and the text inside them is not read a second
   time as prose. `|` inside a cell is escaped and a line break inside a cell becomes
   `<br>`, the same as the Excel direction.
+- **A table ruled down its columns only is put back together.** A statement or an invoice
+  usually draws the column rules and leaves the rows to alignment alone; read literally
+  that is a single row holding every date of the month in one cell. When a cell comes
+  back with line breaks in it, the block is cut again — the column rules give the
+  columns, the printed lines give the rows — and a line that starts with an empty first
+  column is folded back into the row above it as the tail of a long description.
 - Bullet and numbered lines (`•`, `-`, `1.`) become Markdown lists, tightly grouped.
 - **Embedded images are written out** to `name_images/` with `pypdf` and linked from the
-  page they appeared on. A PDF that is only a scan has no text to find, and says so
-  instead of writing an empty file.
+  page they appeared on. The one picture on a page that OCR read is left out: its text is
+  already in the Markdown, so linking the scan of it as well says nothing.
+
+#### Scanned pages (OCR)
+
+A scanned page carries no text at all — there is nothing in it for `pdfplumber` to find.
+`src/ocr.py` draws such a page with `pypdfium2` at 300 dpi and reads it in two stages,
+because reading a page is two different jobs:
+
+| | Job | Tool |
+|---|---|---|
+| **Where the words are** | find every word and put a box round it | **Windows.Media.Ocr**, the engine Windows ships with (the one behind PowerToys' Text Extractor), through the `winrt` bindings |
+| **What the words say** | read the letters inside a box | **VietOCR**, run as ONNX by `onnxruntime` — shipped inside the `.exe` |
+
+The split is there because Windows has no Vietnamese recogniser. Its *boxes* are right
+whatever the language; its *spelling* of Vietnamese is not — `Tài liệu` comes back as
+`Tåi liéu`. So each box is cropped back out of the page picture and read again with
+VietOCR, which is trained on Vietnamese, and only the text is replaced. Nothing has to be
+installed beside the executable; pages that already have text never go near either stage.
+
+The point is that the words come back **placed on the page**, each with a box, so the
+same layout pass runs over them and a scan keeps its shape:
+
+- Words are grouped back into printed lines by the **middle** of each box, not its top —
+  a hyphen is three pixels tall and sits halfway down the line, and lining boxes up by
+  their tops files a bullet as a line of its own.
+- **Aligned blocks become tables.** A run of three or more lines broken by the same
+  lanes of white is cut into columns at those lanes. Prose leaves no lane and stays
+  prose.
+- **Type sizes are read with a wide margin.** An OCR box is only as tall as the letters
+  and marks that landed in it, so `hàng` stands taller than `caa` in the same sentence.
+  Everything within a fifth of the middle size is the body; only text clearly above it
+  stays a heading. Without that, half of an accented paragraph comes out as `###`.
+- OCR runs on **a thread of its own, kept alive for the life of the program**. The
+  bindings want a multi-threaded COM apartment while pywin32 — which drives Word and
+  Excel — wants a single-threaded one, and a thread that closes its apartment on the way
+  out takes the cached OCR factories with it.
+
+Turn the whole thing off with **"OCR trang PDF scan"** in the *Word / Excel / PDF →
+Markdown* tab, or `--no-ocr` on the command line; a scan then reports that there was no
+text to find, as it did before.
+
+##### The Vietnamese reader, without torch
+
+VietOCR is written for torch, which unpacks to about 520 MB — far too much for an app that
+downloads its own updates. So the app does not run VietOCR's code at all: its
+`vgg_seq2seq` model is exported once to two ONNX graphs (`src/models/vietocr/`), quantised
+to 8-bit weights, and `src/vietocr_onnx.py` runs them with `onnxruntime` and numpy, doing
+VietOCR's own preprocessing and greedy decoding step for step.
+
+| | torch (original) | ONNX, 8-bit (shipped) |
+|---|---|---|
+| Size of the model | 90 MB | 27 MB |
+| Added to the `.exe` | 500 MB+ | ~32 MB (onnxruntime 14 MB + model 18 MB, compressed) |
+| Character errors, 240 noisy lines | 0.09% | 0.05% |
+| Speed | 106 ms / line | 73 ms / line |
+
+To regenerate the model (only needed to change it), install the torch original and run
+the exporter, which also checks the result against torch on sample lines:
+
+```bash
+pip install --no-deps vietocr==0.3.13
+pip install -r requirements-export.txt
+python tools/export_vietocr_onnx.py
+```
+
+`--no-deps` on the first line is not optional: vietocr pins `pillow==10.2.0`, which has
+no wheel for Python 3.13 and would drag the app back off the pillow it needs. `build.py`
+excludes torch, vietocr and onnx, so having them on the build machine does not leak them
+into the `.exe`.
+
+Two things about it are worth knowing:
+
+- **onnxruntime has to load before the `winrt` bindings do.** winrt carries its own
+  `msvcp140.dll` (14.29), too old for onnxruntime, and whichever loads first fixes the
+  runtime for the whole process: import `winrt` first and onnxruntime dies with an access
+  violation. `src/ocr.py` therefore imports onnxruntime at the top of the module, above
+  every winrt import, and `build.py` does the same for PyInstaller's analysis processes
+  with a temporary `sitecustomize`.
+- **VietOCR reads a line, not a page.** Give it a whole statement row and it answers with
+  nonsense, so the crops are cut at the wide gaps first: what it is handed is a cell, or
+  a line where there is no table. It also swallows a leading `-` and runs `2.` into the
+  word after it, so list markers are restored from the Windows reading, which never had
+  trouble with an ASCII dash or digit.
+
+What the difference looks like, same scanned page:
+
+```
+Windows alone   Tåi liéu nay mö tå két quå kiém thü' he th6ng trong quy vü'a qua,
++ VietOCR       Tài liệu này mô tả kết quả kiểm thử hệ thống trong quý vừa qua,
+```
+
+It helps a page in English too: `1.200.ooo` becomes `1.200.000`.
 - A password-protected file, a broken file or one that is not a PDF at all is reported as
   an error, not a traceback.
 
@@ -332,6 +429,9 @@ word2md/
 ├── .github/workflows/build.yml # CI: builds both x64 and ARM64
 ├── requirements.txt           # Runtime dependencies
 ├── requirements-dev.txt       # + pyinstaller
+├── requirements-export.txt    # Only to re-export the VietOCR model (torch)
+├── tools/
+│   └── export_vietocr_onnx.py # VietOCR (torch) -> src/models/vietocr (ONNX)
 ├── src/
 │   ├── converter.py           # Core engine
 │   ├── attachments.py         # OLE objects -> real files + links
@@ -339,6 +439,9 @@ word2md/
 │   ├── md_to_docx.py          # Markdown -> Word (python-docx)
 │   ├── md_to_xlsx.py          # Markdown -> Excel (openpyxl)
 │   ├── pdf.py                 # PDF -> Markdown (pdfplumber), and back via Word
+│   ├── ocr.py                 # Scanned pages -> words (Windows OCR + VietOCR)
+│   ├── vietocr_onnx.py        # VietOCR run by onnxruntime, no torch
+│   ├── models/vietocr/        # The exported VietOCR model (ONNX, 8-bit)
 │   ├── legacy.py              # .doc/.xls backends + OLE parser
 │   ├── outline.py             # Outline tree + partial extraction
 │   ├── section_dialog.py      # Section picker window
@@ -350,6 +453,8 @@ word2md/
 │   ├── test_md_to_docx.py     # Unit tests for Markdown -> Word (+ round trips)
 │   ├── test_md_to_xlsx.py     # Unit tests for Markdown -> Excel
 │   ├── test_pdf.py            # Unit tests for both PDF directions
+│   ├── test_pdf_ocr.py        # Rowless tables and scanned pages
+│   ├── test_vietocr_onnx.py   # VietOCR through onnxruntime
 │   ├── test_attachments.py    # Unit tests for OLE attachments
 │   ├── test_outline.py        # Unit tests for the outline and extraction
 │   ├── test_legacy.py         # Unit tests for .doc/.xls
@@ -554,9 +659,10 @@ emulation layer, just slower.
   and converting vector metafiles would need a rendering engine.
 - Files currently open in Word/Excel may raise a permission error; close them and retry.
 - A PDF has no styles to read, so its structure is inferred: headings come from type
-  sizes and numbering, paragraphs from the gaps between lines. A layout with columns,
-  headers and footers, or a table drawn without rules will not come back cleanly, and a
-  scanned PDF has no text at all to find (there is no OCR here).
+  sizes and numbering, paragraphs from the gaps between lines. A layout with columns, or
+  with headers and footers repeated on every page, will not come back cleanly.
+- Bold and italic are lost on a scanned page — OCR reports no weight — so headings there
+  rest on size alone. VietOCR reads printed text; handwriting is out of its reach.
 - Markdown -> PDF needs Microsoft Word or LibreOffice: laying out a page is left to a
   real Office engine rather than reimplemented. LibreOffice may leave an automatic table
   of contents empty until the file is opened in Word.

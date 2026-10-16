@@ -368,6 +368,7 @@ def check_pdf_target(app, tmp_path: Path, out_dir: Path) -> None:
     app._on_markdown_target_changed()
 
     # And the same file, read straight back into the Markdown queue.
+    pump(app, lambda: not app.is_running(), timeout=180)
     app.tabs.set(TAB_TO_MARKDOWN)
     app.add_paths([produced])
     app.root.update()

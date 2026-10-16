@@ -11,6 +11,27 @@ pillow==12.3.0
 pdfplumber==0.11.10
 pypdf==6.16.2
 
+# OCR for a PDF that is only a scan. pypdfium2 (already pulled in by
+# pdfplumber, pinned here because this reads it directly) draws the page, and
+# the winrt bindings hand the picture to Windows.Media.Ocr - the engine behind
+# PowerToys' Text Extractor - so nothing has to be installed beside the .exe.
+# Windows only: on any other platform there is no engine to talk to and the
+# feature reports itself as unavailable.
+pypdfium2==5.13.0
+winrt-runtime==3.2.1; sys_platform == "win32"
+winrt-Windows.Media.Ocr==3.2.1; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging==3.2.1; sys_platform == "win32"
+winrt-Windows.Storage.Streams==3.2.1; sys_platform == "win32"
+winrt-Windows.Globalization==3.2.1; sys_platform == "win32"
+winrt-Windows.Foundation==3.2.1; sys_platform == "win32"
+winrt-Windows.Foundation.Collections==3.2.1; sys_platform == "win32"
+
+# Vietnamese OCR: Windows has no Vietnamese recogniser, so every word box it
+# finds is read again by VietOCR. The model ships in src/models/vietocr as
+# ONNX and runs on onnxruntime (~14 MB in the .exe) - no torch. Both x64 and
+# win_arm64 wheels exist for CPython 3.13.
+onnxruntime==1.31.0
+
 # pdfminer.six needs cryptography for AES-encrypted PDFs, and only 46.x
 # publishes win_arm64 wheels. The ARM64 runner has no Rust/OpenSSL toolchain to
 # build it from source, so that platform is pinned to the last version that
