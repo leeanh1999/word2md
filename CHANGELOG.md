@@ -4,16 +4,19 @@ Every released version of word2md, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-Pushing a `v*` tag builds both executables and publishes them as a GitHub Release,
+Pushing a `v*` tag builds the Windows and Linux executables and publishes them as a GitHub Release,
 using the section below that matches the tag as the release notes.
 
 Only the newest release keeps its executables on GitHub. Older ones are removed:
 none of them can update itself, so downloading one is a dead end.
 
-## [Unreleased]
+## [1.6.1] - 2026-11-05
+
+word2md runs on Linux: one `.tar.gz` with an installer that also sets up OCR and
+LibreOffice, and an app that updates itself from that same archive.
 
 ### Added
-- Linux build: `word2md-linux-x64` binary, `run.sh`, `build.sh`, `install-linux.sh`.
+- **Linux build** (x64): `word2md-linux-x64.tar.gz`. Unpack it and run `./install-linux.sh`. From source: `run.sh`, `build.sh`.
 - Releases carry `word2md-linux-x64.tar.gz` (binary + `.sha256` + `install-linux.sh`); the script verifies the download, installs missing system packages and installs the app per user.
 - OCR on Linux through Tesseract (`tesseract-ocr-vie`), still re-read by VietOCR.
 - The Linux window and app-menu entry show the same logo as on Windows (WM_CLASS `Word2md`, icon in the `.tar.gz`).
@@ -322,6 +325,7 @@ The app updates itself now.
 Older versions have no release to download any more, so each one links to the tag
 it was built from. 1.0.0 predates tagging and links to its commit.
 
+[1.6.1]: https://github.com/leeanh1999/word2md/releases/tag/v1.6.1
 [1.6.0]: https://github.com/leeanh1999/word2md/releases/tag/v1.6.0
 [1.4.2]: https://github.com/leeanh1999/word2md/releases/tag/v1.4.2
 [1.4.1]: https://github.com/leeanh1999/word2md/tree/v1.4.1
