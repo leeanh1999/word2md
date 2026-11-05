@@ -103,11 +103,47 @@ def available_fonts() -> list[str]:
 try:  # Drag & drop is a nice-to-have; the app stays usable without it.
     from tkinterdnd2 import DND_FILES, TkinterDnD
 
+    _DnDWrapper = TkinterDnD.DnDWrapper
     DND_AVAILABLE = True
 except Exception:  # noqa: BLE001
     DND_FILES = None
     TkinterDnD = None
+    _DnDWrapper = object
     DND_AVAILABLE = False
+
+# tkdnd on X11 reads the dropped files once more when the button is released,
+# stamped with the drop's time. Behind XWayland (every GNOME/KDE Wayland
+# session - Tk has no Wayland backend) that last read fails although the same
+# read succeeded on every motion just before, so the drop never reaches
+# <<Drop>>. This keeps the last good read of the current drag and answers the
+# drop with it when the drop-time read fails. Cleared whenever a drag enters.
+_XDND_DROP_FALLBACK = r"""
+namespace eval ::tkdnd::xdnd {
+  if {[info commands ::tkdnd::xdnd::GetDroppedData] ne ""
+      && [info commands ::tkdnd::xdnd::GetDroppedData__word2md] eq ""} {
+    variable _word2md_last {}
+    rename ::tkdnd::xdnd::GetDroppedData ::tkdnd::xdnd::GetDroppedData__word2md
+    proc ::tkdnd::xdnd::GetDroppedData {args} {
+      variable _word2md_last
+      if {[catch {::tkdnd::xdnd::GetDroppedData__word2md {*}$args} res opts]} {
+        if {[llength $_word2md_last] == 2
+            && [lindex $_word2md_last 0] eq [lindex $args 0]} {
+          return [lindex $_word2md_last 1]
+        }
+        return -options $opts $res
+      }
+      set _word2md_last [list [lindex $args 0] $res]
+      return $res
+    }
+    rename ::tkdnd::xdnd::HandleXdndEnter ::tkdnd::xdnd::HandleXdndEnter__word2md
+    proc ::tkdnd::xdnd::HandleXdndEnter {args} {
+      variable _word2md_last
+      set _word2md_last {}
+      uplevel 1 [list ::tkdnd::xdnd::HandleXdndEnter__word2md {*}$args]
+    }
+  }
+}
+"""
 
 STATUS_STYLE = {
     STATUS_SUCCESS: ("OK", "#2fa572"),
@@ -153,8 +189,12 @@ OUTLINE_BUTTON = {
 }
 
 
-class _DnDCTk(ctk.CTk):
-    """CTk window with tkinterdnd2 support mixed in."""
+class _DnDCTk(ctk.CTk, _DnDWrapper):
+    """CTk window with tkinterdnd2 support mixed in.
+
+    DnDWrapper gives the window itself drop_target_register/dnd_bind; without
+    it only child widgets could take a drop.
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -164,6 +204,11 @@ class _DnDCTk(ctk.CTk):
                 self.TkdndVersion = TkinterDnD._require(self)
             except Exception:  # noqa: BLE001
                 self.TkdndVersion = None
+            if self.TkdndVersion is not None and sys.platform.startswith("linux"):
+                try:
+                    self.tk.eval(_XDND_DROP_FALLBACK)
+                except Exception:  # noqa: BLE001 - keep tkdnd as it was
+                    pass
 
 
 # The X11 WM_CLASS of the main window. Linux desktops match it against

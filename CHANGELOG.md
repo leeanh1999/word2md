@@ -27,6 +27,8 @@ LibreOffice, and an app that updates itself from that same archive.
 - LibreOffice conversions left a `<name>_lo/` folder beside the result; they now work in a temp folder.
 - The Linux binary passed its bundled libraries to soffice/tesseract, so MD → PDF failed on newer distributions.
 - After a self-update on Linux, the new build inherited the old build's library path.
+- Drag and drop did nothing on Linux under Wayland: tkdnd's drop-time read of the files fails behind XWayland, so the last read made during the drag is used.
+- The main window itself did not accept drops (only the file list did), on every platform.
 
 ## [1.6.0] - 2026-10-16
 
