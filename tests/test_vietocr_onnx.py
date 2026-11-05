@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import vietocr_onnx  # noqa: E402
 
-# Windows path first, then the same (or metric-compatible) font on Linux.
-FONT = next((p for p in (Path("C:/Windows/Fonts/times.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/times.ttf"), Path("/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf")) if p.exists()), Path("C:/Windows/Fonts/times.ttf"))
+# The real font only (msttcorefonts on Linux): VietOCR misreads look-alikes.
+FONT = next((p for p in (Path("C:/Windows/Fonts/times.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/times.ttf")) if p.exists()), Path("C:/Windows/Fonts/times.ttf"))
 LINES = [
     "Tài liệu này mô tả kết quả kiểm thử hệ thống",
     "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
