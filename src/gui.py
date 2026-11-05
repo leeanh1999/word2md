@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -165,13 +166,56 @@ class _DnDCTk(ctk.CTk):
                 self.TkdndVersion = None
 
 
+# The X11 WM_CLASS of the main window. Linux desktops match it against
+# StartupWMClass in the .desktop file install-linux.sh writes, which is how the
+# window gets that entry's icon in the dock/taskbar.
+WM_CLASS = "word2md"
+
+
 def _make_root() -> ctk.CTk:
     if DND_AVAILABLE:
         try:
-            return _DnDCTk()
+            return _DnDCTk(className=WM_CLASS)
         except Exception:  # noqa: BLE001
             pass
-    return ctk.CTk()
+    return ctk.CTk(className=WM_CLASS)
+
+
+def _set_window_icon(root) -> None:
+    """Give the window the same logo it has on Windows.
+
+    customtkinter sets its icon on Windows only (an .ico through iconbitmap,
+    which X11 cannot use). Elsewhere the same picture is handed to iconphoto
+    as PNG, which Tk 8.6 reads natively. Never raises: no icon is cosmetic.
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        import base64
+        import io
+
+        from PIL import Image
+
+        ico = Path(ctk.__file__).resolve().parent / "assets" / "icons" / (
+            "CustomTkinter_icon_Windows.ico"
+        )
+        photos = []
+        with Image.open(ico) as image:
+            image = image.convert("RGBA")
+            # Not 256: that one overflows the X property and Tk then sets
+            # no icon at all, silently.
+            for size in (128, 64, 32):
+                buffer = io.BytesIO()
+                image.resize((size, size), Image.LANCZOS).save(buffer, format="PNG")
+                photos.append(
+                    tk.PhotoImage(
+                        master=root, data=base64.b64encode(buffer.getvalue())
+                    )
+                )
+        root.iconphoto(True, *photos)
+        root._word2md_icons = photos  # Tk drops an image nobody references
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class FileRow(ctk.CTkFrame):
@@ -407,6 +451,7 @@ class App:
         ctk.set_default_color_theme("blue")
 
         self.root = _make_root()
+        _set_window_icon(self.root)
         self.root.title(f"{__app_name__} v{__version__}")
         self.root.geometry("1000x780")
         self.root.minsize(880, 660)

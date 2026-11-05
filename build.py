@@ -335,6 +335,25 @@ def build(
     return ROOT / "dist" / (f"{name}{suffix}" if onefile else name)
 
 
+def write_linux_icon(target: Path) -> None:
+    """The app-menu icon install-linux.sh installs: the window's logo as PNG.
+
+    Taken from customtkinter's .ico - the logo the Windows build shows - so
+    both platforms look the same. Missing Pillow or customtkinter just means
+    no icon file.
+    """
+    try:
+        import customtkinter
+        from PIL import Image
+    except ImportError:
+        return
+    ico = Path(customtkinter.__file__).resolve().parent / "assets" / "icons" / (
+        "CustomTkinter_icon_Windows.ico"
+    )
+    with Image.open(ico) as image:
+        image.convert("RGBA").resize((256, 256)).save(target, format="PNG")
+
+
 def linux_package(binary: Path) -> Path:
     """dist/<name>.tar.gz: the binary, its .sha256 and install-linux.sh in one folder.
 
@@ -345,6 +364,9 @@ def linux_package(binary: Path) -> Path:
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     checksum = binary.with_name(f"{name}.sha256")
     checksum.write_text(f"{digest}  {name}\n", encoding="utf-8")
+
+    icon = binary.with_name("word2md.png")
+    write_linux_icon(icon)
 
     archive = binary.with_name(f"{name}.tar.gz")
 
@@ -364,6 +386,8 @@ def linux_package(binary: Path) -> Path:
         tar.add(binary, arcname=f"{name}/{name}", filter=executable)
         tar.add(checksum, arcname=f"{name}/{name}.sha256", filter=regular)
         tar.add(ROOT / "install-linux.sh", arcname=f"{name}/install-linux.sh", filter=executable)
+        if icon.is_file():
+            tar.add(icon, arcname=f"{name}/word2md.png", filter=regular)
     return archive
 
 

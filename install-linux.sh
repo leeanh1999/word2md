@@ -23,6 +23,7 @@ HERE="$(dirname "$(readlink -f "$0")")"
 BIN_DIR="${HOME}/.local/bin"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP="${APP_DIR}/word2md.desktop"
+ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
 
 ASSUME_YES=0
 WITH_DEPS=1
@@ -30,7 +31,8 @@ SRC_ARG=""
 for arg in "$@"; do
     case "$arg" in
         --uninstall)
-            rm -f "${BIN_DIR}/word2md" "${BIN_DIR}/word2md.old" "${BIN_DIR}/word2md.new" "$DESKTOP"
+            rm -f "${BIN_DIR}/word2md" "${BIN_DIR}/word2md.old" "${BIN_DIR}/word2md.new" "$DESKTOP" \
+                "${ICON_DIR}/word2md.png"
             command -v update-desktop-database >/dev/null && update-desktop-database "$APP_DIR" || true
             echo "Đã gỡ word2md (gói hệ thống như tesseract, LibreOffice được giữ nguyên)."
             exit 0
@@ -173,14 +175,30 @@ fi
 
 mkdir -p "$BIN_DIR" "$APP_DIR"
 install -m 755 "$SRC" "${BIN_DIR}/word2md"
+
+# The logo, from beside the binary (the release archive, or dist/).
+ICON_LINE=""
+ICON_SRC="$(dirname "$SRC")/word2md.png"
+if [ -f "$ICON_SRC" ]; then
+    mkdir -p "$ICON_DIR"
+    install -m 644 "$ICON_SRC" "${ICON_DIR}/word2md.png"
+    ICON_LINE="Icon=word2md"
+    command -v gtk-update-icon-cache >/dev/null \
+        && gtk-update-icon-cache -q -t "${ICON_DIR%/256x256/apps}" 2>/dev/null || true
+fi
+
+# StartupWMClass matches the window's WM_CLASS (src/gui.py WM_CLASS), so the
+# dock/taskbar shows this entry's icon for the running window.
 cat > "$DESKTOP" <<DESKTOP_EOF
 [Desktop Entry]
 Type=Application
 Name=word2md
 Comment=Chuyển Word/Excel/PDF sang Markdown và ngược lại
 Exec=${BIN_DIR}/word2md
+${ICON_LINE}
+StartupWMClass=Word2md
 Terminal=false
-Categories=Office;Utility;
+Categories=Office;
 DESKTOP_EOF
 command -v update-desktop-database >/dev/null && update-desktop-database "$APP_DIR" || true
 echo
