@@ -206,7 +206,8 @@ class ArchiveUpdateTests(unittest.TestCase):
         dest, result = self._download(archive, hashlib.sha256(archive).hexdigest())
         self.assertEqual(result, dest)
         self.assertEqual(dest.read_bytes(), binary)
-        self.assertTrue(dest.stat().st_mode & 0o100)
+        if updater.os.name != "nt":  # Windows has no exec bit
+            self.assertTrue(dest.stat().st_mode & 0o100)
         self.assertEqual(sorted(p.name for p in dest.parent.iterdir()), [dest.name])
 
     def test_wrong_checksum_is_refused(self):
