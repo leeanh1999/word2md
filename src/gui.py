@@ -117,6 +117,11 @@ except Exception:  # noqa: BLE001
 # read succeeded on every motion just before, so the drop never reaches
 # <<Drop>>. This keeps the last good read of the current drag and answers the
 # drop with it when the drop-time read fails. Cleared whenever a drag enters.
+#
+# A drop released right after entering the window can still come back
+# refuse_drop (tkdnd has not settled on a target yet). The whole window takes
+# files, so in that case the files of this drag go straight to the app through
+# the `word2md_dropped` command App registers.
 _XDND_DROP_FALLBACK = r"""
 namespace eval ::tkdnd::xdnd {
   if {[info commands ::tkdnd::xdnd::GetDroppedData] ne ""
@@ -140,6 +145,21 @@ namespace eval ::tkdnd::xdnd {
       variable _word2md_last
       set _word2md_last {}
       uplevel 1 [list ::tkdnd::xdnd::HandleXdndEnter__word2md {*}$args]
+    }
+    rename ::tkdnd::xdnd::HandleXdndDrop ::tkdnd::xdnd::HandleXdndDrop__word2md
+    proc ::tkdnd::xdnd::HandleXdndDrop {args} {
+      variable _word2md_last
+      set code [catch {uplevel 1 [list ::tkdnd::xdnd::HandleXdndDrop__word2md {*}$args]} res opts]
+      if {($code || $res eq "refuse_drop")
+          && [llength $_word2md_last] == 2
+          && [info commands ::word2md_dropped] ne ""} {
+        set data [lindex $_word2md_last 1]
+        set _word2md_last {}
+        after idle [list ::word2md_dropped $data]
+        return copy
+      }
+      set _word2md_last {}
+      return -options $opts $res
     }
   }
 }
@@ -776,6 +796,13 @@ class App:
     def _enable_dnd(self) -> None:
         if not DND_AVAILABLE or getattr(self.root, "TkdndVersion", None) is None:
             return
+        # Drops tkdnd refused behind XWayland (see _XDND_DROP_FALLBACK).
+        try:
+            self.root.tk.createcommand(
+                "word2md_dropped", lambda data: self._add_dropped(data)
+            )
+        except Exception:  # noqa: BLE001
+            pass
         widgets = [self.root]
         for pane in self.queues.values():
             widgets += [pane.list_frame, pane.placeholder]
@@ -787,10 +814,13 @@ class App:
                 pass
 
     def _on_drop(self, event) -> None:
+        self._add_dropped(event.data)
+
+    def _add_dropped(self, data) -> None:
         try:
-            paths = self.root.tk.splitlist(event.data)
+            paths = self.root.tk.splitlist(data)
         except Exception:  # noqa: BLE001
-            paths = [event.data]
+            paths = [data]
         self.add_paths(paths)
 
     def _on_tab_changed(self) -> None:
@@ -832,7 +862,15 @@ class App:
                 added[pane] = count
 
         if not added:
-            self.status_label.configure(text="Những file này thuộc tab còn lại.")
+            queued = all(
+                any(path in pane.rows for pane in self.queues.values())
+                for path in discovered
+            )
+            self.status_label.configure(
+                text="File đã có trong danh sách."
+                if queued
+                else "Những file này thuộc tab còn lại."
+            )
             return
 
         # Bring whichever tab actually received something to the front.

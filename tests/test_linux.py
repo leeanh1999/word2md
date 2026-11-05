@@ -226,5 +226,70 @@ class ArchiveUpdateTests(unittest.TestCase):
             self._download(b"not a tarball at all")
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "XDND is the X11 protocol")
+class XdndDropFallbackTests(unittest.TestCase):
+    """Behind XWayland a drop tkdnd refuses still delivers the dragged files."""
+
+    def setUp(self):
+        try:
+            from src import gui
+        except Exception as exc:  # noqa: BLE001 - no Tk here
+            self.skipTest(f"no Tk: {exc}")
+        if not gui.DND_AVAILABLE:
+            self.skipTest("tkinterdnd2 missing")
+        try:
+            self.root = gui._make_root()
+        except Exception as exc:  # noqa: BLE001 - no display
+            self.skipTest(f"no display: {exc}")
+        self.addCleanup(self.root.destroy)
+        if getattr(self.root, "TkdndVersion", None) is None:
+            self.skipTest("tkdnd did not load")
+        self.tk = self.root.tk
+        self.dropped = []
+        self.tk.createcommand("word2md_dropped", self.dropped.append)
+
+    def _drop(self, result: str, cached: str | None, fail: bool = False) -> str:
+        body = f"error boom" if fail else f"return {result}"
+        self.tk.eval(f"proc ::tkdnd::xdnd::HandleXdndDrop__word2md args {{ {body} }}")
+        last = "{}" if cached is None else f"[list src {{{cached}}}]"
+        self.tk.eval(f"set ::tkdnd::xdnd::_word2md_last {last}")
+        answer = self.tk.eval("::tkdnd::xdnd::HandleXdndDrop 0")
+        self.root.update()
+        return answer
+
+    def test_window_widgets_accept_drops(self):
+        self.assertTrue(hasattr(self.root, "dnd_bind"))
+
+    def test_refused_drop_with_files_is_delivered(self):
+        self.assertEqual(self._drop("refuse_drop", "/a b/x.docx"), "copy")
+        self.assertEqual(self.dropped, ["/a b/x.docx"])
+
+    def test_failed_drop_with_files_is_delivered(self):
+        self.assertEqual(self._drop("", "/x.pdf", fail=True), "copy")
+        self.assertEqual(self.dropped, ["/x.pdf"])
+
+    def test_accepted_drop_is_left_to_tkdnd(self):
+        self.assertEqual(self._drop("copy", "/x.pdf"), "copy")
+        self.assertEqual(self.dropped, [])
+
+    def test_refused_drop_without_files_stays_refused(self):
+        self.assertEqual(self._drop("refuse_drop", None), "refuse_drop")
+        self.assertEqual(self.dropped, [])
+
+    def test_failed_drop_time_read_uses_the_last_good_read(self):
+        self.tk.eval("""
+          set ::calls 0
+          proc ::tkdnd::xdnd::GetDroppedData__word2md {src args} {
+            incr ::calls
+            if {$::calls == 1} { return /good.docx }
+            error "no selection"
+          }""")
+        self.tk.eval("set ::tkdnd::xdnd::_word2md_last {}")
+        self.assertEqual(self.tk.eval("::tkdnd::xdnd::GetDroppedData S T types 1"), "/good.docx")
+        self.assertEqual(self.tk.eval("::tkdnd::xdnd::GetDroppedData S T types 2"), "/good.docx")
+        with self.assertRaises(Exception):
+            self.tk.eval("::tkdnd::xdnd::GetDroppedData OTHER T types 3")
+
+
 if __name__ == "__main__":
     unittest.main()
