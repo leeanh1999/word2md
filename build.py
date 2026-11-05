@@ -7,6 +7,10 @@
 The executable is named after the architecture it runs on, so the x64 and the
 ARM64 build can sit in dist/ side by side.
 
+On Linux the same script gives dist/word2md-linux-<arch> (an ELF binary).
+It needs the system Tk (python3-tk) at build time; OCR at run time uses the
+`tesseract` command, which is not bundled (apt install tesseract-ocr-vie).
+
 PyInstaller is not a cross-compiler and --target-arch is macOS only, so the
 architecture of the output is always the architecture of the Python running
 this script. An ARM64 executable therefore has to be built on Windows on ARM
@@ -148,6 +152,9 @@ def pe_machine(path: Path) -> str | None:
 
 
 def target_name(arch: str) -> str:
+    """`word2md-x64` on Windows, `word2md-linux-x64` on Linux (see updater.asset_name)."""
+    if sys.platform.startswith("linux"):
+        return f"{APP_NAME}-linux-{arch}"
     return f"{APP_NAME}-{arch}"
 
 

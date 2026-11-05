@@ -754,7 +754,7 @@ def _ocr_scanned_pages(
         warnings.append(f"Đã OCR {len(done)} trang ảnh scan (dò chữ {chosen}, đọc bằng {reader}).")
         if not has_vietocr() and chosen and not chosen.lower().startswith("vi"):
             warnings.append(
-                f"Windows không có gói nhận dạng tiếng Việt và thiếu mô hình VietOCR, "
+                f"Engine OCR không có gói nhận dạng tiếng Việt và thiếu mô hình VietOCR, "
                 f"nên chữ có dấu đọc bằng {chosen} sẽ sai."
             )
     return done

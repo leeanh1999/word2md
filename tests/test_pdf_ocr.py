@@ -142,7 +142,8 @@ VIETNAMESE = [
     (24, "- Kiểm thử chức năng trên ba môi trường khác nhau"),
     (24, "- Rà soát bảo mật theo danh mục nội bộ"),
 ]
-ARIAL = Path("C:/Windows/Fonts/arial.ttf")
+# Windows path first, then the same (or metric-compatible) font on Linux.
+ARIAL = next((p for p in (Path("C:/Windows/Fonts/arial.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/arial.ttf"), Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf")) if p.exists()), Path("C:/Windows/Fonts/arial.ttf"))
 
 
 def vietnamese_scan(target: Path, dpi: int = 200) -> Path:

@@ -87,7 +87,14 @@ def is_newer(candidate: str, current: str = __version__) -> bool:
 
 
 def current_arch() -> str:
-    return ARCH_SUFFIX.get(platform.machine(), "x64")
+    """The build this machine needs: `x64`/`arm64` on Windows, `linux-x64` on Linux."""
+    arch = ARCH_SUFFIX.get(platform.machine(), "x64")
+    return f"linux-{arch}" if sys.platform.startswith("linux") else arch
+
+
+def asset_name(arch: str) -> str:
+    """The release asset build.py produces for `arch` (see build.target_name)."""
+    return f"word2md-{arch}" if arch.startswith("linux-") else f"word2md-{arch}.exe"
 
 
 # ------------------------------------------------------------------ check
@@ -110,7 +117,7 @@ def select_update(
         return None
 
     arch = arch or current_arch()
-    wanted = f"word2md-{arch}.exe"
+    wanted = asset_name(arch)
     assets = {a.get("name"): a for a in payload.get("assets") or []}
     asset = assets.get(wanted)
     if not asset:
@@ -286,6 +293,10 @@ def download(
         dest.unlink(missing_ok=True)
         raise UpdateError("File tải về rỗng.")
 
+    if os.name != "nt":
+        # A Linux download arrives as plain data; the swap must stay runnable.
+        dest.chmod(dest.stat().st_mode | 0o755)
+
     return dest
 
 
@@ -301,7 +312,7 @@ def apply_update(new_exe: Path, exe: Path | None = None, restart: bool = True) -
     exe = exe or current_exe()
     if exe is None:
         raise UpdateError(
-            "Chỉ bản .exe đã đóng gói mới tự cập nhật được. "
+            "Chỉ bản đã đóng gói (.exe / Linux binary) mới tự cập nhật được. "
             f"Hãy tải bản mới tại {RELEASES_PAGE}"
         )
     if not new_exe.is_file():

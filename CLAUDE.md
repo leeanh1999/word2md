@@ -46,6 +46,12 @@ Tests generate their own fixtures via `tests/make_samples.py` (`build_all()` int
 - `gui.py` — two tabs (to-MD, from-MD), each with its own queue/options; conversion runs on a background thread.
 - `updater.py` — self-update from GitHub Releases: download + sha256 verify, rename running exe to `.old`, start successor with PyInstaller bootloader env vars (`_PYI_*`) stripped.
 
+## Linux
+
+- `run.sh` / `build.sh` / `install-linux.sh` mirror the `.bat` files; `build.py` names the output `dist/word2md-linux-<arch>` and `updater.asset_name()` must stay in sync with it.
+- OCR backend is picked by `ocr.ocr_backend()`: Windows.Media.Ocr if winrt imports, else the `tesseract` CLI (TSV, `parse_tesseract_tsv`). Tesseract languages are traineddata names (`vie+eng`), not BCP-47 tags. VietOCR refine runs on both.
+- Needs system `python3-tk`; `.doc` and MD → PDF need LibreOffice (`soffice`). CI job `linux` builds on ubuntu-22.04.
+
 ## Release / dependency rules
 
 - Version lives in `src/__init__.py` (`__version__`). Pushing a `v*` tag runs tests, builds x64 + ARM64 in CI, and publishes a release whose notes are that tag's section of `CHANGELOG.md` (Keep a Changelog format) — update `CHANGELOG.md` before tagging; the in-app updater shows those notes.

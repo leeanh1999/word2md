@@ -167,6 +167,29 @@ def target_path(
 # ------------------------------------------------------------------ word
 
 
+# Office picture types the platform's mimetypes table may not know. Windows
+# fills it from the registry; Linux reads /etc/mime.types, which has no EMF/WMF.
+_IMAGE_EXTENSIONS = {
+    "image/x-emf": ".emf",
+    "image/emf": ".emf",
+    "image/x-wmf": ".wmf",
+    "image/wmf": ".wmf",
+    "image/jpeg": ".jpg",
+    "image/tiff": ".tif",
+    "image/svg+xml": ".svg",
+}
+
+
+def _image_extension(content_type: str | None) -> str:
+    content_type = (content_type or "").lower()
+    extension = _IMAGE_EXTENSIONS.get(content_type) or mimetypes.guess_extension(
+        content_type
+    )
+    if extension == ".jpe":
+        extension = ".jpg"
+    return extension or ".png"
+
+
 def _image_converter(image_dir: Path, warnings: list[str]):
     """Save embedded images next to the .md file and link them relatively."""
     state = {"count": 0}
@@ -175,9 +198,7 @@ def _image_converter(image_dir: Path, warnings: list[str]):
     def convert_image(image):
         try:
             state["count"] += 1
-            extension = mimetypes.guess_extension(image.content_type or "") or ".png"
-            if extension == ".jpe":
-                extension = ".jpg"
+            extension = _image_extension(image.content_type)
             image_dir.mkdir(parents=True, exist_ok=True)
             name = f"image{state['count']}{extension}"
             with image.open() as stream:

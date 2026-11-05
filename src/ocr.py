@@ -15,7 +15,12 @@ jobs, and this module does them with two different tools:
         text is replaced. It runs as ONNX through onnxruntime (see
         `vietocr_onnx.py`), so the executable carries it without torch.
 
-Without the model files the Windows reading is kept as it is and the conversion
+On Linux there is no Windows.Media.Ocr, so the word boxes come from Tesseract
+instead (the `tesseract` command, its TSV output). With the `vie` traineddata
+installed Tesseract already spells Vietnamese; VietOCR still re-reads each box
+when its model is present.
+
+Without the model files the engine's reading is kept as it is and the conversion
 warns.
 The boxes are scaled back to PDF points either way and handed to the same
 layout pass that reads an ordinary PDF, so a scan comes out with the headings,
@@ -46,6 +51,9 @@ _preload_recogniser()
 import asyncio  # noqa: E402
 import io  # noqa: E402
 import re  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
 import threading  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
@@ -75,6 +83,12 @@ _CROP_GAP = 1.2
 # What a list marker looks like. VietOCR is trained on prose and drops one from
 # the front of a line, so it is put back from the Windows reading.
 _MARKER = re.compile(r"^([•●▪◦‣⁃*+]|[-–—]|\d{1,3}[.)])$")
+# Tesseract traineddata, best first, for a document in Vietnamese.
+_TESSERACT_PREFERRED = ("vie", "eng")
+# Seconds Tesseract may spend on one page before the page is given up.
+_TESSERACT_TIMEOUT = 300
+# Tesseract words below this confidence (0-100) are noise, not text.
+_TESSERACT_MIN_CONFIDENCE = 10
 
 
 class OcrError(LegacyConversionError):
@@ -142,6 +156,24 @@ def has_windows_ocr() -> bool:
     return True
 
 
+def find_tesseract() -> str | None:
+    """The tesseract executable, or None."""
+    return shutil.which("tesseract")
+
+
+def has_tesseract() -> bool:
+    return find_tesseract() is not None
+
+
+def ocr_backend() -> str | None:
+    """`windows`, `tesseract`, or None when nothing can find words here."""
+    if has_windows_ocr():
+        return "windows"
+    if has_tesseract():
+        return "tesseract"
+    return None
+
+
 def has_pypdfium2() -> bool:
     try:
         import pypdfium2  # noqa: F401
@@ -152,7 +184,7 @@ def has_pypdfium2() -> bool:
 
 def can_ocr() -> bool:
     """Both halves are needed: something to draw the page, something to read it."""
-    return has_windows_ocr() and has_pypdfium2() and bool(ocr_languages())
+    return ocr_backend() is not None and has_pypdfium2() and bool(ocr_languages())
 
 
 def _languages() -> list[str]:
@@ -162,8 +194,35 @@ def _languages() -> list[str]:
     ]
 
 
+def _tesseract_languages() -> list[str]:
+    tesseract = find_tesseract()
+    if tesseract is None:
+        return []
+    try:
+        done = subprocess.run(
+            [tesseract, "--list-langs"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    # First line is a header ("List of available languages in ...").
+    lines = (done.stdout or "").splitlines()[1:]
+    return [line.strip() for line in lines if line.strip() and line.strip() != "osd"]
+
+
 def ocr_languages() -> list[str]:
-    """The recognisers installed on this machine, as BCP-47 tags."""
+    """The recognisers installed on this machine.
+
+    BCP-47 tags for Windows OCR (`vi-VN`), traineddata names for Tesseract (`vie`).
+    """
+    backend = ocr_backend()
+    if backend == "tesseract":
+        return _tesseract_languages()
+    if backend is None:
+        return []
     try:
         return _run(_languages)
     except Exception:  # noqa: BLE001 - no engine means no languages
@@ -172,6 +231,8 @@ def ocr_languages() -> list[str]:
 
 def ocr_support_note() -> str:
     """One line telling the user what OCR looks like here."""
+    if not has_windows_ocr() and sys.platform != "win32":
+        return _tesseract_support_note()
     if not has_windows_ocr():
         return (
             "OCR: chưa dùng được (thiếu winrt - "
@@ -192,8 +253,35 @@ def ocr_support_note() -> str:
     return f"OCR: Windows nhận dạng được {', '.join(languages)}."
 
 
+def _tesseract_support_note() -> str:
+    if not has_tesseract():
+        return (
+            "OCR: chưa dùng được (thiếu tesseract - "
+            "sudo apt install tesseract-ocr tesseract-ocr-vie)."
+        )
+    if not has_pypdfium2():
+        return "OCR: chưa dùng được (thiếu pypdfium2 để dựng ảnh trang)."
+    languages = _tesseract_languages()
+    if not languages:
+        return "OCR: Tesseract chưa có gói ngôn ngữ nào (tesseract-ocr-eng/-vie)."
+    if has_vietocr():
+        return f"OCR: Tesseract dò chữ ({', '.join(languages)}), VietOCR đọc tiếng Việt."
+    if "vie" not in languages:
+        return (
+            f"OCR: Tesseract nhận dạng được {', '.join(languages)}; chưa có tiếng Việt "
+            "nên chữ có dấu sẽ sai (sudo apt install tesseract-ocr-vie)."
+        )
+    return f"OCR: Tesseract nhận dạng được {', '.join(languages)}."
+
+
 def pick_language(languages: list[str]) -> str | None:
     """The best recogniser on hand for a Vietnamese document."""
+    if languages and all("-" not in tag and len(tag) >= 3 for tag in languages):
+        # Tesseract traineddata names (vie, eng, chi_sim ...), not BCP-47 tags.
+        found = [tag for tag in _TESSERACT_PREFERRED if tag in languages]
+        if found:
+            return "+".join(found)
+        return languages[0]
     lowered = {tag.lower(): tag for tag in languages}
     for wanted in _PREFERRED:
         for tag in lowered:
@@ -428,6 +516,91 @@ async def _read_pages(
         document.close()
 
 
+def _tesseract_read(png: bytes, scale: float, language: str | None) -> list[OcrWord]:
+    """One page through the tesseract CLI, as words in PDF points."""
+    tesseract = find_tesseract()
+    if tesseract is None:
+        raise OcrError("Không tìm thấy tesseract (sudo apt install tesseract-ocr).")
+    command = [tesseract, "stdin", "stdout", "--dpi", str(round(scale * 72))]
+    if language:
+        command += ["-l", language]
+    command.append("tsv")
+    try:
+        done = subprocess.run(
+            command,
+            input=png,
+            capture_output=True,
+            timeout=_TESSERACT_TIMEOUT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OcrError("Tesseract đọc trang quá lâu, đã dừng.") from exc
+    except OSError as exc:
+        raise OcrError(f"Không chạy được tesseract: {exc}") from exc
+    if done.returncode != 0:
+        message = done.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise OcrError(f"Tesseract lỗi: {message[-1] if message else done.returncode}")
+    return parse_tesseract_tsv(done.stdout.decode("utf-8", "replace"), scale)
+
+
+def parse_tesseract_tsv(tsv: str, scale: float) -> list[OcrWord]:
+    """Tesseract's TSV (level 5 = one word) turned into `OcrWord`s in points."""
+    words: list[OcrWord] = []
+    rows = tsv.splitlines()
+    if not rows:
+        return words
+    header = rows[0].split("\t")
+    try:
+        col = {name: header.index(name) for name in (
+            "level", "left", "top", "width", "height", "conf", "text"
+        )}
+    except ValueError:
+        return words
+    for row in rows[1:]:
+        cells = row.split("\t")
+        if len(cells) < len(header) or cells[col["level"]] != "5":
+            continue
+        text = cells[col["text"]].strip()
+        try:
+            confidence = float(cells[col["conf"]])
+            left, top = int(cells[col["left"]]), int(cells[col["top"]])
+            width, height = int(cells[col["width"]]), int(cells[col["height"]])
+        except ValueError:
+            continue
+        if not text or confidence < _TESSERACT_MIN_CONFIDENCE:
+            continue
+        words.append(
+            OcrWord(
+                text=text,
+                x0=left / scale,
+                x1=(left + width) / scale,
+                top=top / scale,
+                bottom=(top + height) / scale,
+            )
+        )
+    return words
+
+
+def _tesseract_pages(
+    source: Path, indexes: list[int], language: str | None, dpi: int, refine: bool
+) -> dict[int, list[OcrWord]]:
+    import pypdfium2
+
+    predictor = _load_recogniser() if refine else None
+    document = pypdfium2.PdfDocument(str(source))
+    try:
+        found: dict[int, list[OcrWord]] = {}
+        for index in indexes:
+            image, png, scale = _render(document, index, dpi)
+            words = _tesseract_read(png, scale, language)
+            if predictor is not None and words:
+                words = _refine(words, image, scale, predictor)
+            found[index] = words
+        return found
+    finally:
+        document.close()
+
+
 def ocr_pdf_pages(
     source: str | Path,
     indexes: list[int],
@@ -446,13 +619,25 @@ def ocr_pdf_pages(
         return {}
     if not has_pypdfium2():
         raise OcrError("Không dựng được ảnh trang để OCR (thiếu pypdfium2).")
-    if not has_windows_ocr():
+    backend = ocr_backend()
+    if backend is None:
+        if sys.platform == "win32":
+            raise OcrError(
+                "Không dùng được OCR của Windows (thiếu winrt; "
+                "chạy pip install -r requirements.txt)."
+            )
         raise OcrError(
-            "Không dùng được OCR của Windows (thiếu winrt; "
-            "chạy pip install -r requirements.txt)."
+            "Không có engine OCR (sudo apt install tesseract-ocr tesseract-ocr-vie)."
         )
     if language is None:
         language = pick_language(ocr_languages())
+    if backend == "tesseract":
+        try:
+            return _tesseract_pages(Path(source), indexes, language, dpi, refine)
+        except OcrError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise OcrError(f"OCR thất bại: {exc}") from exc
     try:
         return _run(
             lambda: asyncio.run(
@@ -471,11 +656,15 @@ __all__ = [
     "OcrError",
     "OcrWord",
     "can_ocr",
+    "find_tesseract",
     "has_pypdfium2",
+    "has_tesseract",
     "has_vietocr",
     "has_windows_ocr",
+    "ocr_backend",
     "ocr_languages",
     "ocr_pdf_pages",
     "ocr_support_note",
+    "parse_tesseract_tsv",
     "pick_language",
 ]

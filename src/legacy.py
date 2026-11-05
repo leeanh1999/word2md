@@ -447,8 +447,13 @@ class LegacyUpgrader:
         if soffice is None:
             raise LegacyConversionError("Không tìm thấy LibreOffice.")
 
-        outdir = target.parent / f"{target.stem}_lo"
-        outdir.mkdir(parents=True, exist_ok=True)
+        # A private scratch folder for LibreOffice's profile and output, so
+        # nothing is left beside the result and parallel runs never share a profile.
+        with tempfile.TemporaryDirectory(prefix="word2md-lo-") as scratch:
+            self._soffice_run(soffice, source, target, Path(scratch))
+
+    @staticmethod
+    def _soffice_run(soffice: str, source: Path, target: Path, outdir: Path) -> None:
         fmt = target.suffix.lower().lstrip(".") or "docx"
         profile = (outdir / "profile").as_uri()
 

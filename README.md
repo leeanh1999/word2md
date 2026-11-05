@@ -463,6 +463,41 @@ word2md/
 └── output/                    # Default output folder
 ```
 
+## Linux
+
+The app runs on Linux from source or as a single ELF binary
+(`word2md-linux-x64`). Differences from Windows:
+
+| Feature | Windows | Linux |
+|---|---|---|
+| OCR word boxes | Windows.Media.Ocr (winrt) | `tesseract` CLI (TSV output) |
+| Vietnamese re-read | VietOCR (ONNX) | VietOCR (ONNX), plus Tesseract `vie` |
+| `.doc` / MD → PDF | Word COM → LibreOffice | LibreOffice (`soffice`) |
+| `.xls` | xlrd → Excel COM → LibreOffice | xlrd → LibreOffice |
+| Self-update asset | `word2md-<arch>.exe` | `word2md-linux-<arch>` |
+
+```bash
+# System packages (Debian/Ubuntu)
+sudo apt install python3-venv python3-tk \
+    tesseract-ocr tesseract-ocr-vie \
+    libreoffice-writer-nogui        # optional: .doc input and MD -> PDF
+
+# Run from source (creates .venv on first run)
+./run.sh                                  # GUI
+./run.sh report.docx -o output            # CLI
+./run.sh --backends                       # what .doc/.xls/PDF backends exist
+
+# Build dist/word2md-linux-x64 and install it to ~/.local/bin + app menu
+./build.sh
+./install-linux.sh                        # --uninstall to remove
+
+# A downloaded release binary needs the exec bit
+chmod +x word2md-linux-x64 && ./word2md-linux-x64
+```
+
+Fedora: `sudo dnf install python3-tkinter tesseract tesseract-langpack-vie libreoffice-writer`.
+Arch: `sudo pacman -S tk tesseract tesseract-data-vie libreoffice-fresh`.
+
 ## Install
 
 ```powershell

@@ -10,6 +10,17 @@ using the section below that matches the tag as the release notes.
 Only the newest release keeps its executables on GitHub. Older ones are removed:
 none of them can update itself, so downloading one is a dead end.
 
+## [Unreleased]
+
+### Added
+- Linux build: `word2md-linux-x64` binary, `run.sh`, `build.sh`, `install-linux.sh`.
+- OCR on Linux through Tesseract (`tesseract-ocr-vie`), still re-read by VietOCR.
+- The updater picks the Linux asset on Linux.
+
+### Fixed
+- EMF/WMF pictures were saved as `.png` where the system MIME table does not know them (Linux).
+- LibreOffice conversions left a `<name>_lo/` folder beside the result; they now work in a temp folder.
+
 ## [1.6.0] - 2026-10-16
 
 Two PDFs that used to come out wrong: a table ruled down its columns only, and a page
