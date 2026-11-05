@@ -95,5 +95,28 @@ class ExternalEnvTests(unittest.TestCase):
             self.assertEqual(legacy.external_env()["LD_LIBRARY_PATH"], "/x")
 
 
+class RelaunchEnvironmentTests(unittest.TestCase):
+    """The build started after an update must not inherit the old bundle's libraries."""
+
+    def test_bundle_library_path_is_dropped(self):
+        env = {
+            "PATH": "/usr/bin",
+            "LD_LIBRARY_PATH": "/tmp/_MEIold",
+            "_PYI_LINUX_PROCESS_NAME": "word2md-linux-x",
+            "_PYI_APPLICATION_HOME_DIR": "/tmp/_MEIold",
+        }
+        cleaned = updater.clean_environment(env, bundle="/tmp/_MEIold")
+        self.assertEqual(cleaned, {"PATH": "/usr/bin"})
+
+    def test_users_own_library_path_survives(self):
+        env = {"LD_LIBRARY_PATH": "/tmp/_MEIold:/opt/lib", "LD_LIBRARY_PATH_ORIG": "/opt/lib"}
+        cleaned = updater.clean_environment(env, bundle="/tmp/_MEIold")
+        self.assertEqual(cleaned, {"LD_LIBRARY_PATH": "/opt/lib"})
+
+    def test_without_a_bundle_nothing_else_changes(self):
+        env = {"LD_LIBRARY_PATH": "/opt/lib"}
+        self.assertEqual(updater.clean_environment(env, bundle=""), env)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -354,11 +354,32 @@ BOOTLOADER_ENV = (
 )
 
 
-def clean_environment(env: dict | None = None) -> dict:
-    """A copy of the environment with the bootloader's own variables removed."""
+def clean_environment(env: dict | None = None, bundle: str | None = None) -> dict:
+    """A copy of the environment with the bootloader's own variables removed.
+
+    On Linux the bootloader also points LD_LIBRARY_PATH at this build's
+    unpacked folder (keeping the user's value in LD_LIBRARY_PATH_ORIG). The
+    successor must not inherit that: the folder is deleted as soon as this
+    process exits, and while it lasts it would hand the old libraries to every
+    program the new build starts (soffice, tesseract).
+    """
     env = dict(os.environ if env is None else env)
     for name in BOOTLOADER_ENV:
         env.pop(name, None)
+    for name in [key for key in env if key.startswith("_PYI_")]:
+        env.pop(name)
+
+    bundle = bundle if bundle is not None else getattr(sys, "_MEIPASS", None)
+    for name in ("LD_LIBRARY_PATH", "LIBPATH"):
+        original = env.pop(f"{name}_ORIG", None)
+        if original is not None:
+            env[name] = original
+        elif bundle and name in env:
+            kept = [p for p in env[name].split(os.pathsep) if p and p != bundle]
+            if kept:
+                env[name] = os.pathsep.join(kept)
+            else:
+                env.pop(name)
     return env
 
 

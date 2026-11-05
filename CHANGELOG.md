@@ -21,6 +21,7 @@ none of them can update itself, so downloading one is a dead end.
 - EMF/WMF pictures were saved as `.png` where the system MIME table does not know them (Linux).
 - LibreOffice conversions left a `<name>_lo/` folder beside the result; they now work in a temp folder.
 - The Linux binary passed its bundled libraries to soffice/tesseract, so MD → PDF failed on newer distributions.
+- After a self-update on Linux, the new build inherited the old build's library path.
 
 ## [1.6.0] - 2026-10-16
 
