@@ -182,9 +182,9 @@ ICON_SRC="$(dirname "$SRC")/word2md.png"
 if [ -f "$ICON_SRC" ]; then
     mkdir -p "$ICON_DIR"
     install -m 644 "$ICON_SRC" "${ICON_DIR}/word2md.png"
-    ICON_LINE="Icon=word2md"
-    command -v gtk-update-icon-cache >/dev/null \
-        && gtk-update-icon-cache -q -t "${ICON_DIR%/256x256/apps}" 2>/dev/null || true
+    # An absolute path, not a theme name: a running GNOME Shell caches theme
+    # lookups and would keep showing no icon until the next login.
+    ICON_LINE="Icon=${ICON_DIR}/word2md.png"
 fi
 
 # StartupWMClass matches the window's WM_CLASS (src/gui.py WM_CLASS), so the
