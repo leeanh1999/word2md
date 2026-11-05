@@ -34,7 +34,7 @@ from .converter import (
 from .md_to_xlsx import XlsxSettings
 from .ocr import can_ocr, ocr_support_note
 from .pdf import pdf_support_note
-from .legacy import can_read_xls, find_soffice, has_msoffice
+from .legacy import can_read_xls, external_env, find_soffice, has_msoffice
 from .md_to_docx import (
     DEFAULT_FONT,
     DEFAULT_FONT_SIZE,
@@ -767,7 +767,7 @@ class App:
             elif sys.platform == "darwin":
                 subprocess.Popen(["open", str(folder)])
             else:
-                subprocess.Popen(["xdg-open", str(folder)])
+                subprocess.Popen(["xdg-open", str(folder)], env=external_env())
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Lỗi", f"Không mở được thư mục:\n{exc}")
 

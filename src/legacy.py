@@ -13,6 +13,7 @@ Only the last .doc fallback loses formatting, and it says so in a warning.
 from __future__ import annotations
 
 import atexit
+import os
 import shutil
 import struct
 import subprocess
@@ -85,6 +86,27 @@ def sniff(source: Path) -> FileKind:
 
 
 # ------------------------------------------------------------------ backends
+
+
+def external_env() -> dict[str, str]:
+    """The environment for a program outside the bundle (soffice, tesseract ...).
+
+    A PyInstaller build on Linux points LD_LIBRARY_PATH at its own unpacked
+    libraries (an older libstdc++, fontconfig, freetype ...) and keeps the
+    user's value in LD_LIBRARY_PATH_ORIG. A system program that inherits the
+    bundle's path loads those libraries instead of its own and fails, so the
+    original value is put back for it.
+    """
+    env = dict(os.environ)
+    if not getattr(sys, "frozen", False) or sys.platform == "win32":
+        return env
+    for name in ("LD_LIBRARY_PATH", "LIBPATH"):
+        original = env.pop(f"{name}_ORIG", None)
+        if original is not None:
+            env[name] = original
+        else:
+            env.pop(name, None)
+    return env
 
 
 def has_pywin32() -> bool:
@@ -474,6 +496,7 @@ class LegacyUpgrader:
             timeout=SOFFICE_TIMEOUT,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=external_env(),
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
 
@@ -638,6 +661,7 @@ __all__ = [
     "clear_cache",
     "doc_text_to_markdown",
     "extract_doc_text",
+    "external_env",
     "find_soffice",
     "has_msoffice",
     "sniff",

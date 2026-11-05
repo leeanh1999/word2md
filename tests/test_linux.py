@@ -9,7 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src import ocr, updater  # noqa: E402
+from src import legacy, ocr, updater  # noqa: E402
 
 HEADER = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext"
 TSV = "\n".join(
@@ -68,6 +68,31 @@ class AssetNameTests(unittest.TestCase):
         ):
             update = updater.select_update(payload)
         self.assertTrue(update.url.endswith("word2md-linux-x64"))
+
+
+class ExternalEnvTests(unittest.TestCase):
+    """A frozen build must not hand its bundled libraries to soffice/tesseract."""
+
+    def test_frozen_build_restores_the_original_library_path(self):
+        env = {"LD_LIBRARY_PATH": "/tmp/_MEI123", "LD_LIBRARY_PATH_ORIG": "/opt/lib"}
+        with mock.patch.dict(legacy.os.environ, env, clear=True), mock.patch.object(
+            legacy.sys, "frozen", True, create=True
+        ), mock.patch.object(legacy.sys, "platform", "linux"):
+            self.assertEqual(legacy.external_env().get("LD_LIBRARY_PATH"), "/opt/lib")
+
+    def test_frozen_build_without_an_original_drops_the_bundle_path(self):
+        with mock.patch.dict(
+            legacy.os.environ, {"LD_LIBRARY_PATH": "/tmp/_MEI123"}, clear=True
+        ), mock.patch.object(legacy.sys, "frozen", True, create=True), mock.patch.object(
+            legacy.sys, "platform", "linux"
+        ):
+            self.assertNotIn("LD_LIBRARY_PATH", legacy.external_env())
+
+    def test_source_run_keeps_the_environment(self):
+        with mock.patch.dict(legacy.os.environ, {"LD_LIBRARY_PATH": "/x"}, clear=True):
+            if getattr(legacy.sys, "frozen", False):
+                self.skipTest("frozen")
+            self.assertEqual(legacy.external_env()["LD_LIBRARY_PATH"], "/x")
 
 
 if __name__ == "__main__":

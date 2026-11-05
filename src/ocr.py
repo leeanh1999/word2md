@@ -60,7 +60,7 @@ from dataclasses import dataclass  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 from . import vietocr_onnx  # noqa: E402
-from .legacy import LegacyConversionError  # noqa: E402
+from .legacy import LegacyConversionError, external_env  # noqa: E402
 
 # What the page is rasterised at. 300 dpi is what a scanner produces and what
 # the engine reads best; below 200 the diacritics start to go.
@@ -205,6 +205,7 @@ def _tesseract_languages() -> list[str]:
             text=True,
             timeout=30,
             check=False,
+            env=external_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -532,6 +533,7 @@ def _tesseract_read(png: bytes, scale: float, language: str | None) -> list[OcrW
             capture_output=True,
             timeout=_TESSERACT_TIMEOUT,
             check=False,
+            env=external_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise OcrError("Tesseract đọc trang quá lâu, đã dừng.") from exc
