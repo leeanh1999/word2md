@@ -478,9 +478,9 @@ The app runs on Linux from source or as a single ELF binary
 
 ```bash
 # System packages (Debian/Ubuntu)
-sudo apt install python3-venv python3-tk \
-    tesseract-ocr tesseract-ocr-vie \
-    libreoffice-writer-nogui        # optional: .doc input and MD -> PDF
+sudo apt install python3-venv python3-tk tesseract-ocr tesseract-ocr-vie
+# Optional, for .doc input and MD -> PDF - skip if LibreOffice is already installed
+sudo apt install libreoffice-writer
 
 # Run from source (creates .venv on first run)
 ./run.sh                                  # GUI
@@ -497,6 +497,11 @@ chmod +x word2md-linux-x64 && ./word2md-linux-x64
 
 Fedora: `sudo dnf install python3-tkinter tesseract tesseract-langpack-vie libreoffice-writer`.
 Arch: `sudo pacman -S tk tesseract tesseract-data-vie libreoffice-fresh`.
+
+> Do not install `libreoffice-writer-nogui` on a machine that already has the
+> full LibreOffice: it conflicts with `libreoffice-core`, and apt removes
+> Writer, Calc and Impress to make room for it. The app only needs `soffice`,
+> which either package provides.
 
 ## Install
 
