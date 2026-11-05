@@ -68,7 +68,7 @@ too.
 - **Vietnamese is read by VietOCR.** Reading a scan is two jobs and
   they are now done by two tools: Windows OCR finds every word and puts a box round it —
   it is good at that whatever the language — and VietOCR reads the letters inside the
-  box. Windows has no Vietnamese recogniser and spells `Tài liệu` as `Tåi liéu`; VietOCR
+  box. Windows has no Vietnamese recogniser and drops or garbles the diacritics; VietOCR
   is trained on the language and gets it right. Only the text is replaced, so the layout
   keeps coming from the boxes. It helps an English page too: `1.200.ooo` becomes
   `1.200.000`.
@@ -99,17 +99,17 @@ directions, and Markdown can come out as a workbook as well as a document.
 
 ### Added
 
-- **A "Chuyển" button on every row**, in both directions. It converts that one file with
+- **A "Convert" button on every row**, in both directions. It converts that one file with
   the open tab's options and leaves the rest of the queue alone; the button at the bottom
-  still runs the whole tab. While anything is converting, the per-row buttons ("Chuyển",
-  "Mục…" and the remove ✕) are greyed out.
+  still runs the whole tab. While anything is converting, the per-row buttons ("Convert",
+  "Sections…" and the remove ✕) are greyed out.
 - **A prompt when the result already exists.** Converting the same file a second time
   asks what to do: *Yes* overwrites the old file, *No* writes it under a new name
-  (`tên (1).md`), *Cancel* converts nothing. It covers the row buttons, the batch button
-  and section extraction. Ticking **"Ghi đè file trùng tên"** answers *overwrite* up
+  (`name (1).md`), *Cancel* converts nothing. It covers the row buttons, the batch button
+  and section extraction. Ticking **"Overwrite existing files"** answers *overwrite* up
   front, so nothing is asked.
 - **Markdown → Excel.** The *Markdown → Word / Excel* tab has an output-format picker
-  ("Định dạng xuất"): **Word (.docx)** by default, or **Excel (.xlsx)**. On the command
+  ("Output format"): **Word (.docx)** by default, or **Excel (.xlsx)**. On the command
   line it is `--to word` / `--to excel`. Picking Excel greys out the Word-only options,
   which have nothing to say about a workbook.
 - The new `src/md_to_xlsx.py` reuses the Markdown parser of the Word direction and writes
@@ -123,7 +123,7 @@ directions, and Markdown can come out as a workbook as well as a document.
   tall as the picture and with its alt text as a caption. This needs Pillow, now a
   dependency (`pillow==12.3.0`); without it, or for a remote, missing or unreadable
   image, the path is kept as text and a warning says why. An image inside a table cell
-  stays a path: a picture cannot live in a cell. `--no-images` and the *"Nhúng ảnh"*
+  stays a path: a picture cannot live in a cell. `--no-images` and the *"Embed images"*
   checkbox turn embedding off, and that checkbox stays enabled for Excel.
 - The **font and size** chosen in the tab apply to the workbook as well (`--font`,
   `--font-size`): they are written onto every cell, with headings a few points above the
@@ -188,8 +188,8 @@ The app updates itself now.
 
 - **In-app update.** The app asks GitHub for the latest release two seconds after
   the window appears, on a background thread, and says nothing unless there is a
-  newer version — an offline machine or a timeout is swallowed. The **"Kiểm tra cập
-  nhật"** button in the header runs the same check out loud.
+  newer version — an offline machine or a timeout is swallowed. The **"Check for updates"**
+  button in the header runs the same check out loud.
 - Only the asset built for the running architecture (`word2md-x64.exe` or
   `word2md-arm64.exe`) is offered, and only when its tag parses as a higher version
   than the running one.
@@ -202,7 +202,7 @@ The app updates itself now.
   `word2md-<arch>.exe.old`, the download takes its place, the new build starts and
   the old process exits. The `.old` file stays locked until that process is gone, so
   it is deleted at the next launch.
-- Postponing the restart keeps the download: the button becomes **"Cài v<version>"**
+- Postponing the restart keeps the download: the button becomes **"Install v<version>"**
   and installs it without downloading again.
 - A conversion in progress blocks the restart, and a swap that fails halfway puts
   the original executable back.
@@ -273,8 +273,8 @@ The app updates itself now.
   land in a scratch folder and each output file copies out only the ones its own
   text points at, rewriting the links as it goes. A section that references nothing
   creates no folder.
-- Exported files are named after the section heading (`Phụ lục.md`,
-  `Phụ lục_images/`) instead of `test - 01 Phụ lục.md`. Merging several sections
+- Exported files are named after the section heading (`Appendix.md`,
+  `Appendix_images/`) instead of `test - 01 Appendix.md`. Merging several sections
   into one file has no single heading to take a name from, so it keeps the
   document's name.
 
