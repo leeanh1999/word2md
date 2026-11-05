@@ -16,7 +16,7 @@ none of them can update itself, so downloading one is a dead end.
 - Linux build: `word2md-linux-x64` binary, `run.sh`, `build.sh`, `install-linux.sh`.
 - Releases carry `word2md-linux-x64.tar.gz` (binary + `.sha256` + `install-linux.sh`); the script verifies the download, installs missing system packages and installs the app per user.
 - OCR on Linux through Tesseract (`tesseract-ocr-vie`), still re-read by VietOCR.
-- The updater picks the Linux asset on Linux.
+- The updater picks the Linux asset on Linux: the `.tar.gz`, verified, then only the binary is taken out of it.
 
 ### Fixed
 - EMF/WMF pictures were saved as `.png` where the system MIME table does not know them (Linux).

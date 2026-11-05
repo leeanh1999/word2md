@@ -338,8 +338,8 @@ def build(
 def linux_package(binary: Path) -> Path:
     """dist/<name>.tar.gz: the binary, its .sha256 and install-linux.sh in one folder.
 
-    What a person downloads. The bare binary stays in the release beside it,
-    because that is the asset the in-app updater fetches.
+    The only Linux asset a release carries: people download it, and the in-app
+    updater fetches it and takes the binary out (updater.archive_name).
     """
     name = binary.name
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()

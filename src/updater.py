@@ -17,8 +17,10 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.request
@@ -61,6 +63,8 @@ class Update:
     size: int
     notes: str = ""
     checksum_url: str | None = None
+    # Set when `url` is a .tar.gz: the path of the executable inside it.
+    archive_member: str | None = None
 
     @property
     def size_text(self) -> str:
@@ -92,6 +96,11 @@ def current_arch() -> str:
     return f"linux-{arch}" if sys.platform.startswith("linux") else arch
 
 
+def archive_name(arch: str) -> str | None:
+    """The .tar.gz build.py packs for a Linux `arch`, or None elsewhere."""
+    return f"word2md-{arch}.tar.gz" if arch.startswith("linux-") else None
+
+
 def asset_name(arch: str) -> str:
     """The release asset build.py produces for `arch` (see build.target_name)."""
     return f"word2md-{arch}" if arch.startswith("linux-") else f"word2md-{arch}.exe"
@@ -117,8 +126,17 @@ def select_update(
         return None
 
     arch = arch or current_arch()
-    wanted = asset_name(arch)
+    binary = asset_name(arch)
     assets = {a.get("name"): a for a in payload.get("assets") or []}
+
+    # On Linux the .tar.gz (smaller) is preferred; the bare binary is the
+    # fallback, and is what releases before the archive existed carry.
+    member = None
+    wanted = archive_name(arch)
+    if wanted and wanted in assets:
+        member = f"{binary}/{binary}"
+    else:
+        wanted = binary
     asset = assets.get(wanted)
     if not asset:
         return None
@@ -130,6 +148,7 @@ def select_update(
         size=int(asset.get("size") or 0),
         notes=(payload.get("body") or "").strip(),
         checksum_url=checksum["browser_download_url"] if checksum else None,
+        archive_member=member,
     )
 
 
@@ -216,11 +235,40 @@ def sweep_leftovers(exe: Path | None = None) -> None:
     exe = exe or current_exe()
     if exe is None:
         return
-    for path in (backup_path(exe), staging_path(exe)):
+    for path in (backup_path(exe), staging_path(exe), _archive_path(staging_path(exe))):
         try:
             path.unlink(missing_ok=True)
         except OSError:  # still locked, or not ours - try again next launch
             pass
+
+
+def _archive_path(dest: Path) -> Path:
+    """Where a downloaded .tar.gz waits before its executable is taken out."""
+    return dest.with_name(dest.name + ".tar.gz")
+
+
+def _extract_member(archive: Path, member: str, dest: Path) -> None:
+    """Copy one regular file out of `archive` to `dest`, and nothing else.
+
+    Only the named member is read, through extractfile, so no path inside the
+    archive can make it write anywhere but `dest`.
+    """
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            try:
+                info = tar.getmember(member)
+            except KeyError as exc:
+                raise UpdateError(f"Bản cập nhật thiếu {member}.") from exc
+            if not info.isfile():
+                raise UpdateError(f"{member} trong bản cập nhật không phải file.")
+            source = tar.extractfile(info)
+            if source is None:
+                raise UpdateError(f"Không đọc được {member} trong bản cập nhật.")
+            with source, dest.open("wb") as out:
+                shutil.copyfileobj(source, out, 262_144)
+    except (tarfile.TarError, EOFError, OSError) as exc:
+        dest.unlink(missing_ok=True)
+        raise UpdateError(f"File cập nhật bị hỏng: {exc}") from exc
 
 
 def _fetch_checksum(url: str, timeout: float) -> str | None:
@@ -244,6 +292,9 @@ def download(
 ) -> Path:
     """Fetch the new executable to `dest` and verify it. Returns the path.
 
+    A .tar.gz update is verified as downloaded, then only its executable is
+    taken out to `dest`.
+
     `on_progress(done, total)` is called as bytes arrive; `cancel()` is polled
     between chunks and aborts the download when it returns True.
     """
@@ -255,13 +306,15 @@ def download(
         _fetch_checksum(update.checksum_url, timeout) if update.checksum_url else None
     )
     digest = hashlib.sha256()
+    # A .tar.gz lands beside dest first; dest only ever holds the executable.
+    fetched = _archive_path(dest) if update.archive_member else dest
     done = 0
 
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         with urllib.request.urlopen(_request(update.url), timeout=timeout) as resp:
             total = int(resp.headers.get("Content-Length") or update.size or 0)
-            with dest.open("wb") as out:
+            with fetched.open("wb") as out:
                 while True:
                     if cancel is not None and cancel():
                         raise UpdateError("Đã huỷ tải bản cập nhật.")
@@ -279,19 +332,25 @@ def download(
             "hoặc chuyển app sang thư mục khác."
         ) from exc
     except UpdateError:
-        dest.unlink(missing_ok=True)
+        fetched.unlink(missing_ok=True)
         raise
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        dest.unlink(missing_ok=True)
+        fetched.unlink(missing_ok=True)
         raise UpdateError(f"Tải bản cập nhật thất bại: {exc}") from exc
 
     if expected and digest.hexdigest() != expected:
-        dest.unlink(missing_ok=True)
+        fetched.unlink(missing_ok=True)
         raise UpdateError("File tải về không khớp mã kiểm tra SHA-256.")
 
     if done == 0:
-        dest.unlink(missing_ok=True)
+        fetched.unlink(missing_ok=True)
         raise UpdateError("File tải về rỗng.")
+
+    if update.archive_member:
+        try:
+            _extract_member(fetched, update.archive_member, dest)
+        finally:
+            fetched.unlink(missing_ok=True)
 
     if os.name != "nt":
         # A Linux download arrives as plain data; the swap must stay runnable.

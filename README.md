@@ -474,7 +474,7 @@ The app runs on Linux from source or as a single ELF binary
 | Vietnamese re-read | VietOCR (ONNX) | VietOCR (ONNX), plus Tesseract `vie` |
 | `.doc` / MD → PDF | Word COM → LibreOffice | LibreOffice (`soffice`) |
 | `.xls` | xlrd → Excel COM → LibreOffice | xlrd → LibreOffice |
-| Self-update asset | `word2md-<arch>.exe` | `word2md-linux-<arch>` |
+| Self-update asset | `word2md-<arch>.exe` | `word2md-linux-<arch>.tar.gz` |
 
 ```bash
 # System packages (Debian/Ubuntu)
@@ -507,9 +507,9 @@ cd word2md-linux-x64
 ```
 
 The archive holds the binary, its `.sha256` and `install-linux.sh`;
-`build.py` writes it to `dist/` on every Linux build. The bare
-`word2md-linux-x64` stays in the release too: it is what the in-app updater
-downloads.
+`build.py` writes it to `dist/` on every Linux build. It is the only Linux
+asset in a release: the in-app updater downloads it too, checks its SHA-256
+and takes the binary out.
 
 The script installs tesseract + Vietnamese data and LibreOffice Writer through
 apt, dnf or pacman, only when they are missing (sudo is asked for then). It

@@ -48,7 +48,7 @@ Tests generate their own fixtures via `tests/make_samples.py` (`build_all()` int
 
 ## Linux
 
-- `run.sh` / `build.sh` / `install-linux.sh` mirror the `.bat` files; `build.py` names the output `dist/word2md-linux-<arch>` and `updater.asset_name()` must stay in sync with it.
+- `run.sh` / `build.sh` / `install-linux.sh` mirror the `.bat` files; `build.py` names the output `dist/word2md-linux-<arch>` and packs it into `dist/word2md-linux-<arch>.tar.gz` (binary + `.sha256` + `install-linux.sh`), the only Linux release asset. The updater downloads that archive (`updater.archive_name()`, member `<name>/<name>`), falling back to a bare binary for older releases; keep the names in sync.
 - OCR backend is picked by `ocr.ocr_backend()`: Windows.Media.Ocr if winrt imports, else the `tesseract` CLI (TSV, `parse_tesseract_tsv`). Tesseract languages are traineddata names (`vie+eng`), not BCP-47 tags. VietOCR refine runs on both.
 - Needs system `python3-tk`; `.doc` and MD → PDF need LibreOffice (`soffice`). CI job `linux` builds on ubuntu-22.04.
 
