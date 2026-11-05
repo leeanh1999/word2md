@@ -491,9 +491,20 @@ sudo apt install libreoffice-writer
 ./build.sh
 ./install-linux.sh                        # --uninstall to remove
 
-# A downloaded release binary needs the exec bit
-chmod +x word2md-linux-x64 && ./word2md-linux-x64
 ```
+
+### Installing a release on Linux
+
+Download `word2md-linux-x64`, `word2md-linux-x64.sha256` and `install-linux.sh`
+from the release into one folder, then:
+
+```bash
+bash install-linux.sh              # checks SHA-256, installs ~/.local/bin/word2md + menu entry
+bash install-linux.sh --uninstall  # removes it
+```
+
+It installs per user, without sudo, so the in-app updater can replace the
+binary later; it also lists any missing system packages (tesseract, LibreOffice).
 
 Fedora: `sudo dnf install python3-tkinter tesseract tesseract-langpack-vie libreoffice-writer`.
 Arch: `sudo pacman -S tk tesseract tesseract-data-vie libreoffice-fresh`.

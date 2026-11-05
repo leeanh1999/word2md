@@ -14,6 +14,7 @@ none of them can update itself, so downloading one is a dead end.
 
 ### Added
 - Linux build: `word2md-linux-x64` binary, `run.sh`, `build.sh`, `install-linux.sh`.
+- Releases carry `install-linux.sh`: it verifies the download and installs per user.
 - OCR on Linux through Tesseract (`tesseract-ocr-vie`), still re-read by VietOCR.
 - The updater picks the Linux asset on Linux.
 

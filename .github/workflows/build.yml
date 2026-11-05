@@ -147,6 +147,6 @@ jobs:
           else
             notes=(--generate-notes)
           fi
-          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/word2md-linux-x64 dist/*.sha256 \
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/word2md-linux-x64 dist/*.sha256 install-linux.sh \
             --title "word2md $GITHUB_REF_NAME" \
             "${notes[@]}"
