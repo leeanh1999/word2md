@@ -35,8 +35,10 @@ import contextlib
 import os
 import platform
 import shutil
+import hashlib
 import struct
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -333,6 +335,38 @@ def build(
     return ROOT / "dist" / (f"{name}{suffix}" if onefile else name)
 
 
+def linux_package(binary: Path) -> Path:
+    """dist/<name>.tar.gz: the binary, its .sha256 and install-linux.sh in one folder.
+
+    What a person downloads. The bare binary stays in the release beside it,
+    because that is the asset the in-app updater fetches.
+    """
+    name = binary.name
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    checksum = binary.with_name(f"{name}.sha256")
+    checksum.write_text(f"{digest}  {name}\n", encoding="utf-8")
+
+    archive = binary.with_name(f"{name}.tar.gz")
+
+    def executable(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        info.mode = 0o755
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        return info
+
+    def regular(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        info.mode = 0o644
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        return info
+
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(binary, arcname=f"{name}/{name}", filter=executable)
+        tar.add(checksum, arcname=f"{name}/{name}.sha256", filter=regular)
+        tar.add(ROOT / "install-linux.sh", arcname=f"{name}/install-linux.sh", filter=executable)
+    return archive
+
+
 def megabytes(path: Path) -> float:
     if path.is_file():
         return path.stat().st_size / 1_048_576
@@ -400,6 +434,10 @@ def main() -> int:
         return 1
 
     print(f"\nBuild OK: {result}  ({megabytes(result):.1f} MB)")
+
+    if sys.platform.startswith("linux") and result.is_file():
+        package = linux_package(result)
+        print(f"Package:  {package}  ({megabytes(package):.1f} MB)")
 
     executable = result if result.is_file() else result / f"{result.name}.exe"
     built = pe_machine(executable)

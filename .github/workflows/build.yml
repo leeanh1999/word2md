@@ -88,7 +88,11 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: word2md-linux-x64
-          path: dist/word2md-linux-x64
+          # The bare binary is what the in-app updater downloads; the .tar.gz
+          # (binary + .sha256 + install-linux.sh) is what people download.
+          path: |
+            dist/word2md-linux-x64
+            dist/word2md-linux-x64.tar.gz
           if-no-files-found: error
 
   # Only on a tag, and only once both executables exist: a release missing an
@@ -147,6 +151,6 @@ jobs:
           else
             notes=(--generate-notes)
           fi
-          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/word2md-linux-x64 dist/*.sha256 install-linux.sh \
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/word2md-linux-x64 dist/word2md-linux-x64.tar.gz dist/*.sha256 \
             --title "word2md $GITHUB_REF_NAME" \
             "${notes[@]}"

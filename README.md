@@ -495,15 +495,21 @@ sudo apt install libreoffice-writer
 
 ### Installing a release on Linux
 
-Download `word2md-linux-x64`, `word2md-linux-x64.sha256` and `install-linux.sh`
-from the release into one folder, then:
+Download `word2md-linux-x64.tar.gz` from the release, then:
 
 ```bash
-bash install-linux.sh              # check SHA-256, install missing packages (asks first), install the app
-bash install-linux.sh --yes        # same, without the question
-bash install-linux.sh --no-deps    # app only, leave system packages alone
-bash install-linux.sh --uninstall  # remove the app (system packages stay)
+tar xzf word2md-linux-x64.tar.gz
+cd word2md-linux-x64
+./install-linux.sh              # check SHA-256, install missing packages (asks first), install the app
+./install-linux.sh --yes        # same, without the question
+./install-linux.sh --no-deps    # app only, leave system packages alone
+./install-linux.sh --uninstall  # remove the app (system packages stay)
 ```
+
+The archive holds the binary, its `.sha256` and `install-linux.sh`;
+`build.py` writes it to `dist/` on every Linux build. The bare
+`word2md-linux-x64` stays in the release too: it is what the in-app updater
+downloads.
 
 The script installs tesseract + Vietnamese data and LibreOffice Writer through
 apt, dnf or pacman, only when they are missing (sudo is asked for then). It
