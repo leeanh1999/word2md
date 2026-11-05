@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Install word2md for the current user: ~/.local/bin/word2md + app menu entry.
+# Install word2md for the current user, with the system packages it needs.
 #
-# From a GitHub release (script and binary downloaded into the same folder):
-#   bash install-linux.sh
-# From a source checkout, after ./build.sh:
-#   ./install-linux.sh                       (uses dist/word2md-linux-<arch>)
-# Any other binary:
-#   bash install-linux.sh path/to/word2md-linux-x64
-# Remove:
-#   bash install-linux.sh --uninstall
+#   bash install-linux.sh                 cài gói còn thiếu (hỏi trước) + cài app
+#   bash install-linux.sh --yes           không hỏi lại (vẫn cần mật khẩu sudo)
+#   bash install-linux.sh --no-deps       chỉ cài app, không đụng gói hệ thống
+#   bash install-linux.sh FILE            cài binary ở đường dẫn FILE
+#   bash install-linux.sh --uninstall     gỡ app (không gỡ gói hệ thống)
+#
+# The binary is looked for beside this script (a release download), then in
+# dist/ (a source checkout). The app goes to ~/.local/bin without sudo, so the
+# in-app updater can replace it later; only the system packages need sudo.
+#
+# System packages, installed only when missing:
+#   tesseract + Vietnamese data   OCR of scanned PDFs
+#   LibreOffice Writer            .doc input and Markdown -> PDF
+# LibreOffice is installed as the full libreoffice-writer and only when no
+# soffice exists: the -nogui variant conflicts with a desktop LibreOffice and
+# would make the package manager remove it.
 set -euo pipefail
 
 HERE="$(dirname "$(readlink -f "$0")")"
@@ -16,12 +24,26 @@ BIN_DIR="${HOME}/.local/bin"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP="${APP_DIR}/word2md.desktop"
 
-if [ "${1:-}" = "--uninstall" ]; then
-    rm -f "${BIN_DIR}/word2md" "${BIN_DIR}/word2md.old" "${BIN_DIR}/word2md.new" "$DESKTOP"
-    command -v update-desktop-database >/dev/null && update-desktop-database "$APP_DIR" || true
-    echo "Đã gỡ word2md."
-    exit 0
-fi
+ASSUME_YES=0
+WITH_DEPS=1
+SRC_ARG=""
+for arg in "$@"; do
+    case "$arg" in
+        --uninstall)
+            rm -f "${BIN_DIR}/word2md" "${BIN_DIR}/word2md.old" "${BIN_DIR}/word2md.new" "$DESKTOP"
+            command -v update-desktop-database >/dev/null && update-desktop-database "$APP_DIR" || true
+            echo "Đã gỡ word2md (gói hệ thống như tesseract, LibreOffice được giữ nguyên)."
+            exit 0
+            ;;
+        -y|--yes) ASSUME_YES=1 ;;
+        --no-deps) WITH_DEPS=0 ;;
+        -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -*) echo "Không hiểu tuỳ chọn: $arg (xem --help)" >&2; exit 1 ;;
+        *) SRC_ARG="$arg" ;;
+    esac
+done
+
+# ------------------------------------------------------------ the binary
 
 case "$(uname -m)" in
     x86_64|amd64) ARCH=x64 ;;
@@ -30,10 +52,8 @@ case "$(uname -m)" in
 esac
 NAME="word2md-linux-${ARCH}"
 
-# The binary: the argument, else beside this script (release download),
-# else in dist/ (source checkout).
-if [ -n "${1:-}" ]; then
-    SRC="$(readlink -f "$1")"
+if [ -n "$SRC_ARG" ]; then
+    SRC="$(readlink -f "$SRC_ARG")"
 elif [ -f "${HERE}/${NAME}" ]; then
     SRC="${HERE}/${NAME}"
 elif [ -f "${HERE}/dist/${NAME}" ]; then
@@ -44,15 +64,11 @@ else
     echo "hoặc truyền đường dẫn: bash install-linux.sh path/to/${NAME}" >&2
     exit 1
 fi
-if [ ! -f "$SRC" ]; then
-    echo "Không thấy file: $SRC" >&2
-    exit 1
-fi
+[ -f "$SRC" ] || { echo "Không thấy file: $SRC" >&2; exit 1; }
 
-# Verify against the release checksum when it was downloaded too.
-SUM="${SRC}.sha256"
-if [ -f "$SUM" ]; then
-    expected="$(awk '{print $1; exit}' "$SUM")"
+# Check the download before anything is installed.
+if [ -f "${SRC}.sha256" ]; then
+    expected="$(awk '{print $1; exit}' "${SRC}.sha256")"
     actual="$(sha256sum "$SRC" | awk '{print $1}')"
     if [ "$expected" != "$actual" ]; then
         echo "Mã SHA-256 không khớp - file tải về bị lỗi, hãy tải lại." >&2
@@ -60,6 +76,100 @@ if [ -f "$SUM" ]; then
     fi
     echo "SHA-256: OK"
 fi
+
+# ------------------------------------------------------ system packages
+
+has_tesseract() { command -v tesseract >/dev/null; }
+# tesseract 4 prints the list on stderr, 5 on stdout.
+has_vie() { has_tesseract && tesseract --list-langs 2>&1 | grep -qx vie; }
+has_soffice() { command -v soffice >/dev/null || command -v libreoffice >/dev/null; }
+
+missing_features() {
+    local out=()
+    has_tesseract || out+=("OCR (tesseract)")
+    has_vie || out+=("OCR tiếng Việt (tesseract vie)")
+    has_soffice || out+=("LibreOffice (đọc .doc, xuất PDF)")
+    if [ ${#out[@]} -gt 0 ]; then printf '%s\n' "${out[@]}"; fi
+}
+
+# Package names per package manager for what is missing right now.
+PM=""
+PKGS=()
+plan_packages() {
+    PKGS=()
+    if command -v apt-get >/dev/null; then
+        PM=apt
+        has_tesseract || PKGS+=(tesseract-ocr)
+        has_vie || PKGS+=(tesseract-ocr-vie)
+        has_soffice || PKGS+=(libreoffice-writer)
+    elif command -v dnf >/dev/null; then
+        PM=dnf
+        has_tesseract || PKGS+=(tesseract)
+        has_vie || PKGS+=(tesseract-langpack-vie)
+        has_soffice || PKGS+=(libreoffice-writer)
+    elif command -v pacman >/dev/null; then
+        PM=pacman
+        has_tesseract || PKGS+=(tesseract)
+        has_vie || PKGS+=(tesseract-data-vie)
+        has_soffice || PKGS+=(libreoffice-fresh)
+    else
+        PM=""
+    fi
+}
+
+run_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null; then
+        sudo "$@"
+    else
+        echo "Cần quyền root để cài gói hệ thống nhưng không có sudo." >&2
+        return 1
+    fi
+}
+
+install_packages() {
+    case "$PM" in
+        apt)
+            run_root apt-get update
+            run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "${PKGS[@]}"
+            ;;
+        dnf) run_root dnf install -y "${PKGS[@]}" ;;
+        pacman) run_root pacman -S --needed --noconfirm "${PKGS[@]}" ;;
+    esac
+}
+
+if [ "$WITH_DEPS" -eq 1 ]; then
+    plan_packages
+    if [ ${#PKGS[@]} -eq 0 ] && [ -z "$(missing_features)" ]; then
+        echo "Gói hệ thống: đã đủ (tesseract + tiếng Việt, LibreOffice)."
+    elif [ -z "$PM" ]; then
+        echo "Không nhận ra trình quản lý gói (apt/dnf/pacman). Hãy tự cài:"
+        missing_features | sed 's/^/  - /'
+    else
+        echo "Thiếu gói hệ thống, sẽ cài bằng ${PM}:"
+        printf '  %s\n' "${PKGS[@]}"
+        answer=y
+        if [ "$ASSUME_YES" -eq 0 ]; then
+            if [ -t 0 ]; then
+                read -r -p "Cài ngay? [Y/n] " answer || answer=n
+            else
+                answer=n
+                echo "(Không có terminal để hỏi - bỏ qua; chạy lại với --yes để cài.)"
+            fi
+        fi
+        case "${answer:-y}" in
+            [Yy]*|"")
+                if ! install_packages; then
+                    echo "Cài gói hệ thống thất bại - vẫn cài app, các tính năng trên sẽ chưa dùng được." >&2
+                fi
+                ;;
+            *) echo "Bỏ qua cài gói hệ thống." ;;
+        esac
+    fi
+fi
+
+# ------------------------------------------------------------- the app
 
 mkdir -p "$BIN_DIR" "$APP_DIR"
 install -m 755 "$SRC" "${BIN_DIR}/word2md"
@@ -73,22 +183,16 @@ Terminal=false
 Categories=Office;Utility;
 DESKTOP_EOF
 command -v update-desktop-database >/dev/null && update-desktop-database "$APP_DIR" || true
+echo
 echo "Đã cài: ${BIN_DIR}/word2md  (menu ứng dụng: word2md)"
 
-# What the app needs from the system but does not carry itself.
-missing=()
-command -v tesseract >/dev/null || missing+=("tesseract-ocr tesseract-ocr-vie  (OCR PDF scan)")
-if command -v tesseract >/dev/null && ! tesseract --list-langs 2>/dev/null | grep -qx vie; then
-    missing+=("tesseract-ocr-vie  (OCR tiếng Việt)")
-fi
-command -v soffice >/dev/null || missing+=("libreoffice-writer  (đọc .doc, xuất PDF)")
-if [ ${#missing[@]} -gt 0 ]; then
-    echo
-    echo "Chưa có (không bắt buộc, cài để dùng đủ tính năng):"
-    printf '  sudo apt install %s\n' "${missing[@]}"
+still="$(missing_features)"
+if [ -n "$still" ]; then
+    echo "Chưa có (app vẫn chạy, riêng các tính năng này chưa dùng được):"
+    echo "$still" | sed 's/^/  - /'
 fi
 
 case ":${PATH}:" in
-    *":${BIN_DIR}:"*) ;;
-    *) echo; echo "Lưu ý: ${BIN_DIR} chưa có trong PATH - đăng xuất/đăng nhập lại, hoặc chạy ${BIN_DIR}/word2md" ;;
+    *":${BIN_DIR}:"*) echo "Chạy: word2md" ;;
+    *) echo "Chạy: ${BIN_DIR}/word2md  (${BIN_DIR} chưa có trong PATH - đăng nhập lại để gõ được 'word2md')" ;;
 esac

@@ -499,20 +499,17 @@ Download `word2md-linux-x64`, `word2md-linux-x64.sha256` and `install-linux.sh`
 from the release into one folder, then:
 
 ```bash
-bash install-linux.sh              # checks SHA-256, installs ~/.local/bin/word2md + menu entry
-bash install-linux.sh --uninstall  # removes it
+bash install-linux.sh              # check SHA-256, install missing packages (asks first), install the app
+bash install-linux.sh --yes        # same, without the question
+bash install-linux.sh --no-deps    # app only, leave system packages alone
+bash install-linux.sh --uninstall  # remove the app (system packages stay)
 ```
 
-It installs per user, without sudo, so the in-app updater can replace the
-binary later; it also lists any missing system packages (tesseract, LibreOffice).
-
-Fedora: `sudo dnf install python3-tkinter tesseract tesseract-langpack-vie libreoffice-writer`.
-Arch: `sudo pacman -S tk tesseract tesseract-data-vie libreoffice-fresh`.
-
-> Do not install `libreoffice-writer-nogui` on a machine that already has the
-> full LibreOffice: it conflicts with `libreoffice-core`, and apt removes
-> Writer, Calc and Impress to make room for it. The app only needs `soffice`,
-> which either package provides.
+The script installs tesseract + Vietnamese data and LibreOffice Writer through
+apt, dnf or pacman, only when they are missing (sudo is asked for then). It
+never installs `libreoffice-writer-nogui`, which would remove a desktop
+LibreOffice. The app itself goes to `~/.local/bin/word2md` with a menu entry,
+without sudo, so the in-app updater can replace it later.
 
 ## Install
 
